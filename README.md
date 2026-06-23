@@ -349,6 +349,17 @@ static class FmEngineApi {
 }
 ```
 
+## FmEngineApi互換エミュレータ
+
+https://github.com/madscient/FMgenEngine
+https://github.com/madscient/DSAemuEngine
+https://github.com/madscient/DBOPLEngine
+https://github.com/madscient/SAASoundEngine
+https://github.com/madscient/NukedEngine
+https://github.com/madscient/YMEngine
+https://github.com/madscient/SCCIBridgeEngine
+https://github.com/madscient/FMEngineTest
+
 ## ライセンス
 
 - **このツール**: MIT
