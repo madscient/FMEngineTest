@@ -11,7 +11,7 @@
 //   -r <rate>        : サンプルレートを指定 (省略時 48000)
 //   -d <name>        : デバイス名を部分一致で指定 (省略時デフォルトデバイス)
 //
-// JSON フォーマット:
+// パッチ JSON フォーマット:
 //   {
 //     "sample_rate": 48000,
 //     "global": { "note_ms": 800, "rest_ms": 200 },
@@ -25,6 +25,24 @@
 //   gain        : L/R 共通ゲイン (省略時 1.0)
 //   gain_l/gain_r: 左右個別ゲイン (指定時 "gain" より優先)
 //   "$ref"      : 他の JSON ファイル内の同名チップ定義を参照する
+//
+// テストスイート JSON フォーマット:
+//   {
+//     "test_suite": [
+//       {
+//         "engine":      "YMEngine.dll",       // エンジン DLL パス (省略時 CLI -e または デフォルト)
+//         "sample_rate": 48000,                 // サンプルレート   (省略時 CLI -r または 48000)
+//         "device":      "Realtek",             // デバイス名部分一致 (省略時 CLI -d またはデフォルト)
+//         "patches":     ["patches/opna.json", "patches/opl2.json"],  // パッチファイルリスト
+//         "output_wav":  "out/result.wav"   // WAV出力パス (省略時はリアルタイム再生のみ)
+//       },
+//       { ... }
+//     ]
+//   }
+//
+//   test_suite キーを持つ JSON ファイルはテストスイートとして扱われる。
+//   各エントリのフィールドは省略可能で、省略時は CLI オプションの値が使われる。
+//   エントリごとにエンジン DLL のロード/アンロードが行われる。
 
 #include "RtAudio.h"
 #include <cstdio>
@@ -33,6 +51,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <fstream>
 #include <stdexcept>
 #ifdef _WIN32
 #  include <windows.h>
@@ -40,6 +59,8 @@
 #  include <dlfcn.h>
 #  include <unistd.h>
 #  include <time.h>
+#  include <sys/stat.h>
+#  include <errno.h>
 #endif
 #include "nlohmann/json.hpp"
 
@@ -445,47 +466,335 @@ static void playChipsFromFile(const FmEngineApi& api, const FileContext& ctx,
 }
 
 // =========================================================
-//  main
+//  テストスイート
 // =========================================================
-int main(int argc, char* argv[]) {
-    std::vector<const char*> jsonFiles;
-    uint32_t    sampleRate = 48000;
-    const char* deviceName = nullptr;
-    const char* enginePath = nullptr;  // -e で指定
 
-    for (int i = 1; i < argc; ++i) {
-        if      (strcmp(argv[i], "-r") == 0 && i+1 < argc) sampleRate = (uint32_t)atoi(argv[++i]);
-        else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) deviceName = argv[++i];
-        else if (strcmp(argv[i], "-e") == 0 && i+1 < argc) enginePath = argv[++i];
-        else if (argv[i][0] != '-')                        jsonFiles.push_back(argv[i]);
+// 1エントリ分のパラメータ (未指定は空文字/0 = CLIデフォルトを使う)
+struct SuiteEntry {
+    std::string              engine;       // "" → CLI -e / デフォルト DLL
+    uint32_t                 sampleRate;   // 0  → CLI -r / 48000
+    std::string              device;       // "" → CLI -d / デフォルトデバイス
+    std::vector<std::string> patches;      // パッチファイルパスリスト
+    std::string              outputWav;    // "" → リアルタイム再生のみ / 指定→ WAV 出力
+};
+
+// JSON が test_suite キーを持つかチェック
+static bool isTestSuiteJson(const json& root) {
+    return root.is_object() && root.contains("test_suite");
+}
+
+// test_suite JSON をパースしてエントリリストに変換
+static std::vector<SuiteEntry> parseTestSuite(
+    const json& root,
+    const char* cliEngine,
+    uint32_t    cliRate,
+    const char* cliDevice)
+{
+    std::vector<SuiteEntry> entries;
+    const auto& suite = root["test_suite"];
+    if (!suite.is_array()) {
+        fprintf(stderr, "test_suite must be a JSON array\n");
+        return entries;
     }
-    if (jsonFiles.empty())
-        jsonFiles.push_back("patches/all.json");
+    for (const auto& item : suite) {
+        if (!item.is_object()) continue;
+        SuiteEntry e;
+        // engine: JSON優先、なければCLI、なければ空(呼び出し側でデフォルトDLL適用)
+        if (item.contains("engine") && item["engine"].is_string())
+            e.engine = item["engine"].get<std::string>();
+        else if (cliEngine)
+            e.engine = cliEngine;
 
-    // デフォルト DLL 名
+        // sample_rate: JSON優先、なければCLI
+        if (item.contains("sample_rate") && item["sample_rate"].is_number_unsigned())
+            e.sampleRate = item["sample_rate"].get<uint32_t>();
+        else
+            e.sampleRate = cliRate;  // cliRate は呼び出し元でデフォルト48000済み
+
+        // device: JSON優先、なければCLI
+        if (item.contains("device") && item["device"].is_string())
+            e.device = item["device"].get<std::string>();
+        else if (cliDevice)
+            e.device = cliDevice;
+
+        // output_wav
+        if (item.contains("output_wav") && item["output_wav"].is_string())
+            e.outputWav = item["output_wav"].get<std::string>();
+
+        // patches
+        if (item.contains("patches") && item["patches"].is_array()) {
+            for (const auto& p : item["patches"]) {
+                if (p.is_string())
+                    e.patches.push_back(p.get<std::string>());
+            }
+        }
+        if (e.patches.empty()) {
+            fprintf(stderr, "  [WARN] test_suite entry has no patches, skipping\n");
+            continue;
+        }
+        entries.push_back(std::move(e));
+    }
+    return entries;
+}
+
+// =========================================================
+//  WAV ライター (16-bit PCM, ステレオ)
+// =========================================================
+
+// ディレクトリを再帰的に作成するヘルパー
+static bool mkdirs(const std::string& path) {
+    if (path.empty()) return true;
 #ifdef _WIN32
-    const char* defaultDll = "FmEngineApi.dll";
-#elif defined(__APPLE__)
-    const char* defaultDll = "libFmEngineApi.dylib";
+    // バックスラッシュ・スラッシュ両対応
+    std::string p = path;
+    for (char& c : p) if (c == '/') c = '\\';
+    if (CreateDirectoryA(p.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS)
+        return true;
+    // 親ディレクトリを再帰的に作成
+    const auto pos = p.find_last_of("\\/");
+    if (pos == std::string::npos || pos == 0) return false;
+    if (!mkdirs(p.substr(0, pos))) return false;
+    return CreateDirectoryA(p.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
 #else
-    const char* defaultDll = "libFmEngineApi.so";
+    // mkdir -p 相当
+    std::string tmp = path;
+    for (size_t i = 1; i < tmp.size(); ++i) {
+        if (tmp[i] == '/' || tmp[i] == '\\') {
+            tmp[i] = '\0';
+            ::mkdir(tmp.c_str(), 0755);
+            tmp[i] = '/';
+        }
+    }
+    return ::mkdir(tmp.c_str(), 0755) == 0 || errno == EEXIST;
 #endif
-    if (!enginePath) enginePath = defaultDll;
+}
 
-    // ① DLL を動的ロード
+// 16-bit リトルエンディアン書き込みヘルパー
+static void writeU16LE(std::ofstream& f, uint16_t v) {
+    uint8_t buf[2] = { (uint8_t)(v & 0xFF), (uint8_t)(v >> 8) };
+    f.write(reinterpret_cast<char*>(buf), 2);
+}
+static void writeU32LE(std::ofstream& f, uint32_t v) {
+    uint8_t buf[4] = {
+        (uint8_t)(v & 0xFF), (uint8_t)((v >> 8) & 0xFF),
+        (uint8_t)((v >> 16) & 0xFF), (uint8_t)((v >> 24) & 0xFF)
+    };
+    f.write(reinterpret_cast<char*>(buf), 4);
+}
+
+// WAV ヘッダーを書き込む (dataSize = PCM バイト数)
+static void writeWavHeader(std::ofstream& f, uint32_t sampleRate,
+                            uint16_t channels, uint32_t dataSize) {
+    const uint16_t bitsPerSample = 16;
+    const uint32_t byteRate      = sampleRate * channels * (bitsPerSample / 8);
+    const uint16_t blockAlign    = channels * (bitsPerSample / 8);
+
+    f.write("RIFF", 4);
+    writeU32LE(f, 36 + dataSize);   // ファイルサイズ - 8
+    f.write("WAVE", 4);
+    f.write("fmt ", 4);
+    writeU32LE(f, 16);              // fmt チャンクサイズ
+    writeU16LE(f, 1);               // PCM
+    writeU16LE(f, channels);
+    writeU32LE(f, sampleRate);
+    writeU32LE(f, byteRate);
+    writeU16LE(f, blockAlign);
+    writeU16LE(f, bitsPerSample);
+    f.write("data", 4);
+    writeU32LE(f, dataSize);
+}
+
+// float サンプル [-1.0, 1.0] → int16_t にクランプ変換
+static int16_t floatToS16(float v) {
+    const int32_t s = static_cast<int32_t>(v * 32767.0f);
+    if (s >  32767) return  32767;
+    if (s < -32768) return -32768;
+    return static_cast<int16_t>(s);
+}
+
+// =========================================================
+//  パッチからの総再生時間計算
+// =========================================================
+// 全チャンネルの (note_ms + rest_ms) を合計して返す
+static uint64_t calcTotalMs(const std::vector<FileContext>& ctxs) {
+    uint64_t total = 0;
+    for (const auto& ctx : ctxs) {
+        if (!ctx.valid || !ctx.root.contains("chips")) continue;
+        const uint32_t global_note = ctx.root.contains("global")
+            ? ctx.root["global"].value("note_ms", 800u) : 800u;
+        const uint32_t global_rest = ctx.root.contains("global")
+            ? ctx.root["global"].value("rest_ms", 200u) : 200u;
+        for (auto it = ctx.root["chips"].begin(); it != ctx.root["chips"].end(); ++it) {
+            const auto& chipDef = it.value();
+            if (!chipDef.contains("channels")) continue;
+            for (const auto& chDef : chipDef["channels"]) {
+                total += chDef.value("note_ms", global_note);
+                total += chDef.value("rest_ms", global_rest);
+            }
+        }
+    }
+    return total;
+}
+
+// =========================================================
+//  オフラインレンダリング → WAV 出力
+// =========================================================
+// パッチを順に適用しながら FmEngine_Generate を呼び出し続け、WAV に書き出す。
+// リアルタイム再生と異なりオーディオデバイスを使わない。
+static bool renderToWav(const FmEngineApi& api, FmEngineHandle eng,
+                         std::vector<FileContext>& ctxs,
+                         uint32_t sampleRate, const std::string& outPath) {
+    // 出力ディレクトリ作成
+    const auto dirPos = outPath.find_last_of("/\\");
+    if (dirPos != std::string::npos && dirPos > 0) {
+        mkdirs(outPath.substr(0, dirPos));
+    }
+
+    // ファイルオープン (ヘッダーは後で上書き)
+    std::ofstream f(outPath, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) {
+        fprintf(stderr, "Cannot open WAV output: %s\n", outPath.c_str());
+        return false;
+    }
+
+    // 仮ヘッダー (dataSize = 0、後で seek して上書き)
+    writeWavHeader(f, sampleRate, 2, 0);
+    const std::streampos dataStart = f.tellp();
+
+    const uint32_t BLOCK = 512;
+    std::vector<float> bufL(BLOCK), bufR(BLOCK);
+    uint32_t totalSamples = 0;
+
+    // --- パッチ再生ループ ---
+    for (auto& ctx : ctxs) {
+        if (!ctx.valid || !ctx.root.contains("chips")) continue;
+
+        const uint32_t global_note = ctx.root.contains("global")
+            ? ctx.root["global"].value("note_ms", 800u) : 800u;
+        const uint32_t global_rest = ctx.root.contains("global")
+            ? ctx.root["global"].value("rest_ms", 200u) : 200u;
+
+        uint32_t slotIdx = 0;
+        for (auto it = ctx.root["chips"].begin();
+             it != ctx.root["chips"].end(); ++it, ++slotIdx) {
+            if (slotIdx >= ctx.slots.size() || !ctx.slots[slotIdx].valid) continue;
+            const uint32_t chip_id = ctx.slots[slotIdx].id;
+            const auto& chipDef   = it.value();
+
+            if (chipDef.contains("init"))
+                applyRegs(api, eng, chip_id, chipDef["init"]);
+
+            printf("[%s] chip_id=%u, native_rate=%u Hz\n",
+                   api.GetChipName(eng, chip_id),
+                   chip_id, api.GetNativeRate(eng, chip_id));
+
+            if (!chipDef.contains("channels")) continue;
+
+            for (const auto& chDef : chipDef["channels"]) {
+                const uint32_t chPort  = chDef.value("port", 0u);
+                const uint32_t note_ms = chDef.value("note_ms", global_note);
+                const uint32_t rest_ms = chDef.value("rest_ms", global_rest);
+
+                printf("  CH%u", chDef.value("ch", 0u));
+                if (chDef.contains("_comment"))
+                    printf(" %s", chDef["_comment"].get<std::string>().c_str());
+                printf("\n");
+                fflush(stdout);
+
+                if (chDef.contains("init"))
+                    applyRegs(api, eng, chip_id, chDef["init"], chPort);
+                if (chDef.contains("key_on"))
+                    applyRegs(api, eng, chip_id, chDef["key_on"], chPort);
+
+                // note 期間レンダリング
+                uint32_t remain = (uint32_t)((uint64_t)note_ms * sampleRate / 1000);
+                while (remain > 0) {
+                    const uint32_t n = (remain < BLOCK) ? remain : BLOCK;
+                    api.Generate(eng, bufL.data(), bufR.data(), n);
+                    for (uint32_t s = 0; s < n; ++s) {
+                        const int16_t l = floatToS16(bufL[s]);
+                        const int16_t r = floatToS16(bufR[s]);
+                        f.write(reinterpret_cast<const char*>(&l), 2);
+                        f.write(reinterpret_cast<const char*>(&r), 2);
+                    }
+                    totalSamples += n;
+                    remain -= n;
+                }
+
+                if (chDef.contains("key_off"))
+                    applyRegs(api, eng, chip_id, chDef["key_off"], chPort);
+
+                // rest 期間レンダリング
+                remain = (uint32_t)((uint64_t)rest_ms * sampleRate / 1000);
+                while (remain > 0) {
+                    const uint32_t n = (remain < BLOCK) ? remain : BLOCK;
+                    api.Generate(eng, bufL.data(), bufR.data(), n);
+                    for (uint32_t s = 0; s < n; ++s) {
+                        const int16_t l = floatToS16(bufL[s]);
+                        const int16_t r = floatToS16(bufR[s]);
+                        f.write(reinterpret_cast<const char*>(&l), 2);
+                        f.write(reinterpret_cast<const char*>(&r), 2);
+                    }
+                    totalSamples += n;
+                    remain -= n;
+                }
+            }
+        }
+        printf("\n");
+    }
+
+    // WAV ヘッダーを正しい dataSize で上書き
+    const uint32_t dataSize = totalSamples * 2 * 2; // stereo * 2bytes/sample
+    f.seekp(0);
+    writeWavHeader(f, sampleRate, 2, dataSize);
+    f.close();
+
+    printf("WAV exported: %s (%u samples, %.2f sec)\n",
+           outPath.c_str(), totalSamples,
+           (double)totalSamples / sampleRate);
+    return true;
+}
+
+// =========================================================
+//  テストスイートの1エントリを実行する
+// 戻り値: 成功=true
+static bool runSuiteEntry(
+    const SuiteEntry& entry,
+    const char* defaultDll)
+{
+    const char* enginePath = entry.engine.empty() ? defaultDll : entry.engine.c_str();
+    const uint32_t sampleRate = entry.sampleRate;
+    const char* deviceName = entry.device.empty() ? nullptr : entry.device.c_str();
+
+    printf("----------------------------------------\n");
+    printf("Engine      : %s\n", enginePath);
+    printf("Sample rate : %u Hz\n", sampleRate);
+    printf("Device      : %s\n", deviceName ? deviceName : "(default)");
+    if (!entry.outputWav.empty())
+        printf("Output WAV  : %s\n", entry.outputWav.c_str());
+    printf("Patches     :\n");
+    for (const auto& p : entry.patches)
+        printf("  %s\n", p.c_str());
+    printf("----------------------------------------\n");
+    fflush(stdout);
+
+    // DLL ロード
     FmEngineApi api;
     DllHandle   dllHandle = nullptr;
-    printf("FMEngineTest\n");
     printf("Loading engine: %s\n", enginePath);
-    if (!loadApi(enginePath, api, dllHandle)) return 1;
+    if (!loadApi(enginePath, api, dllHandle)) return false;
     printf("Engine loaded.\n\n");
 
-    // ② エンジン作成
+    // エンジン作成
     FmEngineHandle eng = api.Create(sampleRate);
-    if (!eng) { fputs("FmEngine_Create failed\n", stderr); return 1; }
+    if (!eng) {
+        fputs("FmEngine_Create failed\n", stderr);
+        dllClose(dllHandle);
+        return false;
+    }
     printf("Sample rate: %u Hz\n\n", sampleRate);
 
-    // 対応チップ一覧を表示
+    // 対応チップ一覧
     {
         const uint32_t n = api.Inquiry(eng);
         printf("Supported chips (%u):", n);
@@ -494,13 +803,36 @@ int main(int argc, char* argv[]) {
         printf("\n\n");
     }
 
-    // ③ RtAudio デバイス列挙
+    // パッチファイル読み込み・チップ追加 (ストリーム開始前 / WAV モードでも同じ)
+    std::vector<FileContext> ctxs(entry.patches.size());
+    for (size_t i = 0; i < entry.patches.size(); ++i) {
+        ctxs[i].path  = entry.patches[i];
+        ctxs[i].valid = loadJson(entry.patches[i].c_str(), ctxs[i].root);
+        if (ctxs[i].valid && ctxs[i].root.contains("chips") &&
+            ctxs[i].root["chips"].is_object()) {
+            std::vector<std::string> visited{ ctxs[i].path };
+            resolveChipRefs(ctxs[i].root["chips"], ctxs[i].path, visited);
+        }
+        addChipsFromFile(api, ctxs[i], eng);
+    }
+
+    // --- WAV エクスポートモード ---
+    if (!entry.outputWav.empty()) {
+        printf("Rendering offline...\n");
+        fflush(stdout);
+        const bool ok = renderToWav(api, eng, ctxs, sampleRate, entry.outputWav);
+        api.Destroy(eng);
+        dllClose(dllHandle);
+        return ok;
+    }
+
+    // --- リアルタイム再生モード ---
     RtAudio audio;
     if (audio.getDeviceCount() == 0) {
         fputs("RtAudio: no audio devices found\n", stderr);
         api.Destroy(eng);
         dllClose(dllHandle);
-        return 1;
+        return false;
     }
     printf("Audio devices:\n");
     unsigned int selectedId = audio.getDefaultOutputDevice();
@@ -522,20 +854,6 @@ int main(int argc, char* argv[]) {
     }
     printf("\nUsing device id=%u\n\n", selectedId);
 
-    // ④ 全ファイルを読み込み、全チップを先に追加 (ストリーム開始前)
-    std::vector<FileContext> ctxs(jsonFiles.size());
-    for (size_t i = 0; i < jsonFiles.size(); ++i) {
-        ctxs[i].path  = jsonFiles[i];
-        ctxs[i].valid = loadJson(jsonFiles[i], ctxs[i].root);
-        if (ctxs[i].valid && ctxs[i].root.contains("chips") &&
-            ctxs[i].root["chips"].is_object()) {
-            std::vector<std::string> visited{ ctxs[i].path };
-            resolveChipRefs(ctxs[i].root["chips"], ctxs[i].path, visited);
-        }
-        addChipsFromFile(api, ctxs[i], eng);
-    }
-
-    // ⑤ RtAudio ストリーム開始 (全 AddChip 完了後)
     AudioState audioState;
     audioState.eng = eng;
     audioState.api = &api;
@@ -559,7 +877,7 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "RtAudio::openStream failed: %s\n", audio.getErrorText().c_str());
         api.Destroy(eng);
         dllClose(dllHandle);
-        return 1;
+        return false;
     }
 
     err = audio.startStream();
@@ -568,20 +886,105 @@ int main(int argc, char* argv[]) {
         audio.closeStream();
         api.Destroy(eng);
         dllClose(dllHandle);
-        return 1;
+        return false;
     }
     printf("Stream started (bufferFrames=%u)\n\n", bufferFrames);
     fflush(stdout);
 
-    // ⑥ 各ファイルを発音テスト
+    // 発音テスト
     for (const auto& ctx : ctxs)
         playChipsFromFile(api, ctx, eng);
 
-    // ⑦ 停止・解放
+    // 停止・解放
     if (audio.isStreamRunning()) audio.stopStream();
     if (audio.isStreamOpen())    audio.closeStream();
     api.Destroy(eng);
     dllClose(dllHandle);
-    printf("Done.\n");
-    return 0;
+    return true;
+}
+
+// =========================================================
+//  main
+// =========================================================
+int main(int argc, char* argv[]) {
+    std::vector<const char*> jsonFiles;
+    uint32_t    sampleRate = 48000;
+    const char* deviceName = nullptr;
+    const char* enginePath = nullptr;  // -e で指定
+
+    for (int i = 1; i < argc; ++i) {
+        if      (strcmp(argv[i], "-r") == 0 && i+1 < argc) sampleRate = (uint32_t)atoi(argv[++i]);
+        else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) deviceName = argv[++i];
+        else if (strcmp(argv[i], "-e") == 0 && i+1 < argc) enginePath = argv[++i];
+        else if (argv[i][0] != '-')                        jsonFiles.push_back(argv[i]);
+    }
+    // デフォルト DLL 名
+#ifdef _WIN32
+    const char* defaultDll = "FmEngineApi.dll";
+#elif defined(__APPLE__)
+    const char* defaultDll = "libFmEngineApi.dylib";
+#else
+    const char* defaultDll = "libFmEngineApi.so";
+#endif
+
+    printf("FMEngineTest\n\n");
+
+    // ① 各 JSON ファイルを先読みし、テストスイートか通常パッチかに振り分ける
+    //    テストスイートが1つでも含まれていれば、全ファイルをスイートとして処理する。
+    //    (通常パッチは後段で SuiteEntry に変換)
+
+    if (jsonFiles.empty())
+        jsonFiles.push_back("patches/all.json");
+
+    // テストスイートエントリを収集
+    std::vector<SuiteEntry> suiteEntries;
+    // 通常パッチファイル (test_suite キーを持たないもの)
+    std::vector<const char*> normalPatches;
+
+    bool hasSuite = false;
+    for (const char* f : jsonFiles) {
+        json root;
+        if (!loadJson(f, root)) continue;
+        if (isTestSuiteJson(root)) {
+            hasSuite = true;
+            auto entries = parseTestSuite(root, enginePath, sampleRate, deviceName);
+            suiteEntries.insert(suiteEntries.end(), entries.begin(), entries.end());
+        } else {
+            normalPatches.push_back(f);
+        }
+    }
+
+    // 通常パッチが混在している場合は1エントリにまとめる
+    if (!normalPatches.empty()) {
+        SuiteEntry e;
+        e.engine     = enginePath ? enginePath : "";
+        e.sampleRate = sampleRate;
+        e.device     = deviceName ? deviceName : "";
+        for (const char* p : normalPatches)
+            e.patches.push_back(p);
+        suiteEntries.insert(suiteEntries.begin(), std::move(e));
+    }
+
+    if (suiteEntries.empty()) {
+        fputs("No valid test entries found.\n", stderr);
+        return 1;
+    }
+
+    // ② エントリ数を表示
+    if (hasSuite) {
+        printf("Test suite mode: %zu entries\n\n",  suiteEntries.size());
+    }
+
+    // ③ 各エントリを順に実行
+    int failed = 0;
+    for (size_t i = 0; i < suiteEntries.size(); ++i) {
+        if (hasSuite)
+            printf("\n=== Entry [%zu/%zu] ===\n", i + 1, suiteEntries.size());
+        if (!runSuiteEntry(suiteEntries[i], defaultDll))
+            ++failed;
+    }
+
+    printf("\nDone. (%zu entries, %d failed)\n",
+           suiteEntries.size(), failed);
+    return failed ? 1 : 0;
 }
