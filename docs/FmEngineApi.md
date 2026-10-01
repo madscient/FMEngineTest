@@ -28,11 +28,19 @@ typedef enum {
     FM_ERR_UNAVAILABLE   = -4,
 } FmResult;
 
+// チップから見えるメモリ。詳細は「外部メモリの割り当て」を参照
 typedef enum {
-    FM_MEM_ADPCM_A = 1,  // ADPCM-A ROM (OPNA/OPNB/OPNBB)
-    FM_MEM_ADPCM_B = 2,  // ADPCM-B ROM/RAM (OPNA/OPNB/OPNBB/Y8950)
-    FM_MEM_PCM     = 3,  // PCM ROM (OPL4)
+    FM_MEM_ADPCM_A         = 1,  // ADPCM-A (OPNA/OPNB/OPNBB)
+    FM_MEM_ADPCM_B         = 2,  // ADPCM-B (OPNA/OPNB/OPNBB/Y8950)。OPNA/Y8950 では RAM モードのメモリ
+    FM_MEM_PCM             = 3,  // PCM (OPL4)
+    FM_MEM_ADPCM_B_ROMMODE = 4,  // ADPCM-B の ROM モードのメモリ (OPNA/Y8950)。FmEngine_SetMemoryEx 専用
 } FmMemoryType;
+
+// 外部メモリにつないだデバイスの種類。詳細は「外部メモリの割り当て」を参照
+typedef enum {
+    FM_ACCESS_ROM = 0,
+    FM_ACCESS_RAM = 1,
+} FmMemoryAccess;
 
 // 出力の部位。チップが別々の端子から出す出力を表す。
 // 番号はチップをまたいで重ならない。詳細は「部位ごとのゲイン」を参照
@@ -182,12 +190,67 @@ if (getPartMask && getPartMask(eng, opna_id, &mask) == FM_OK
 ```c
 // ストリーム開始前に呼ぶこと (スレッドセーフではない)
 // data の寿命は呼び出し元が管理すること
+// mem_type に FM_MEM_ADPCM_B_ROMMODE は使わない
 FmResult FmEngine_SetMemory(
     FmEngineHandle engine, uint32_t chip_id,
     FmMemoryType mem_type, const uint8_t* data, uint32_t size);
 uint32_t FmEngine_GetMemorySize(
     FmEngineHandle engine, uint32_t chip_id, FmMemoryType mem_type);
 ```
+
+`FmEngine_SetMemory` に渡したデータをエンジンが複製するか参照するか、チップからの書き込みをデータに反映するかは、エンジンのコア実装によります。ROM と RAM を区別して割り当てるには [`FmEngine_SetMemoryEx`](#外部メモリの割り当て-任意) を使います。
+
+## 外部メモリの割り当て (任意)
+
+この節の関数は任意のエクスポートです。エクスポートしていない DLL もこの仕様に準拠します。  
+呼び出し側は `GetProcAddress` / `dlsym` でシンボルの有無を確かめてから呼び出してください。シンボルが無いエンジンでは `FmEngine_SetMemory` だけが使えます。
+
+```c
+// mem_type のメモリの [base, base + size) に data を割り当てる
+// data == NULL ならその範囲と重なる割り当てをすべて外す (access は無視)
+// ストリーム開始前に呼ぶこと (スレッドセーフではない)
+// 戻り値:
+//   FM_ERR_INVALID_ARG : 未知の chip_id、チップが持たない mem_type、size が 0、
+//                        既存の割り当てと範囲が重なる
+//   FM_ERR_UNAVAILABLE : FM_ACCESS_RAM のブロックをその場で読み書きできない
+FmResult FmEngine_SetMemoryEx(
+    FmEngineHandle engine, uint32_t chip_id,
+    FmMemoryType mem_type, uint32_t base,
+    uint8_t* data, uint32_t size, FmMemoryAccess access);
+```
+
+| `mem_type` | 対象チップ | 内容 |
+|---|---|---|
+| `FM_MEM_ADPCM_A`         | OPNA | リズム音の内蔵 ROM の内容 |
+| `FM_MEM_ADPCM_A`         | OPNB, OPNBB | ADPCM-A のメモリ |
+| `FM_MEM_ADPCM_B`         | OPNA, Y8950 | ADPCM-B の ROM/RAM 選択ビットが RAM のときにアクセスするメモリ |
+| `FM_MEM_ADPCM_B`         | OPNB, OPNBB | ADPCM-B のメモリ |
+| `FM_MEM_ADPCM_B_ROMMODE` | OPNA, Y8950 | ADPCM-B の ROM/RAM 選択ビットが ROM のときにアクセスするメモリ |
+| `FM_MEM_PCM`             | OPL4 | PCM のメモリ |
+
+OPNA と Y8950 の ROM/RAM 選択ビットはアクセスの方法を切り替えるもので、ROM モードと RAM モードでは別のメモリにアクセスします。ROM モードのメモリに RAM をつなぐこともできるので、選択ビットはメモリが書き込めるかどうかを表しません。
+
+`access` は、つないだデバイスの種類を表します。
+
+| | `FM_ACCESS_ROM` | `FM_ACCESS_RAM` |
+|---|---|---|
+| ブロックの内容 | 割り当て中は変わらない | チップ以外が書き換えてもよい |
+| エンジンによる複製 | してよい | しない。ブロックをその場で読み書きする |
+| チップが書き込んだとき | 捨てる | ブロックに書く |
+
+チップがいつメモリに書き込むか (ROM モード中は書き込まない、など) はチップの動作によるもので、`access` では決まりません。
+
+- 番地 `base + i` のバイトは `data[i]` に対応します。バイトの中身の並び (チップが読むビットの順序、実機のメモリの配置との対応など) はこの API では定めません。アプリケーションとエンジンの間で取り決めてください。
+- 割り当ての無い番地を読むと 0 です。割り当ての無い番地への書き込みは捨てます。
+- 割り当てを外すか `FmEngine_Destroy` が戻るまで、`data` を解放しないでください。エンジンは `data` を解放しません。
+
+`FM_ACCESS_RAM` のブロックについて、エンジンは次を守ります。
+
+1. ブロックに触るのは `FmEngine_SetMemoryEx`・`FmEngine_Write`・`FmEngine_Generate` の実行中だけ
+2. 呼び出し側が `FmEngine_Write` の前にブロックへ書いた値は、その `FmEngine_Write` がチップに反映される時点でチップから見える
+3. `FmEngine_Write` によってチップがメモリに書いた値は、その `FmEngine_Write` が戻った後に始まった `FmEngine_Generate` が戻った時点でブロックに入っている
+
+これ以外の並行アクセスは保証しません。ブロックを別のデバイスと共有する場合、`FmEngine_Generate` の実行中に別のスレッドからブロックに触らないようにするのは呼び出し側の責任です (エンジンを止める、など)。
 
 ## 波形生成
 
@@ -230,6 +293,12 @@ FmEngine_GetPartGain
 FmEngine_GetPartMask
 ```
 
+DLL がエクスポートしてもよいシンボル (任意。[外部メモリの割り当て](#外部メモリの割り当て-任意)):
+
+```
+FmEngine_SetMemoryEx
+```
+
 ## C# (P/Invoke) サンプル
 
 ```csharp
@@ -264,6 +333,12 @@ static class FmEngineApi {
         IntPtr engine, uint chipId, int memType, byte[] data, uint size);
     [DllImport(DLL)] public static extern uint    FmEngine_GetMemorySize(
         IntPtr engine, uint chipId, int memType);
+    // 任意シンボル。DLL がエクスポートしているときだけ呼ぶこと
+    // data は呼び出しの後もエンジンが使うので、GC が動かさないメモリ
+    // (Marshal.AllocHGlobal、固定した GCHandle など) を渡すこと
+    [DllImport(DLL)] public static extern int     FmEngine_SetMemoryEx(
+        IntPtr engine, uint chipId, int memType, uint baseAddr,
+        IntPtr data, uint size, int access);
     [DllImport(DLL)] public static extern int     FmEngine_Generate(
         IntPtr engine, IntPtr outL, IntPtr outR, uint samples);
 }
