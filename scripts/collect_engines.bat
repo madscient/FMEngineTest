@@ -21,7 +21,10 @@ rem --- Engine list (repository names only) ---
 set ENGINES=YMEngine NukedEngine FMgenEngine DSAemuEngine DBOPLEngine SAASoundEngine SCCIBridgeEngine
 
 rem --- Working directory ---
-set "ENGINES_DIR=..\."
+rem     Keep this inside the repository. The loop runs "git pull" and builds in
+rem     each clone, so pointing it at existing local repositories would modify
+rem     their working trees.
+set "ENGINES_DIR=engines"
 set "GITHUB_BASE=https://github.com/madscient"
 
 echo ============================================================

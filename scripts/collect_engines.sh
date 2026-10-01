@@ -26,6 +26,8 @@ ENGINES=(
     SAASoundEngine
 )
 
+# リポジトリの外 (既存のローカルリポジトリ) を指さないこと。各クローンで
+# git pull とビルドを行うので、その作業ツリーを書き換えてしまう
 ENGINES_DIR="engines"
 GITHUB_BASE="https://github.com/madscient"
 
