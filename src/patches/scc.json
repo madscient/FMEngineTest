@@ -7,6 +7,7 @@
   "chips": {
     "SCC": {
       "_comment": "SCC 5ch. SCC_writeReg アドレス体系: 0x00-0x9F=波形, 0xC0-0xC9=周波数, 0xD0-0xD4=ボリューム, 0xE1=CH enable",
+      "clock": 3579545,
       "init": [
         {
           "reg": "0xE0",

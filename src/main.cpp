@@ -16,12 +16,13 @@
 //     "sample_rate": 48000,
 //     "global": { "note_ms": 800, "rest_ms": 200 },
 //     "chips": {
-//       "OPL2": { "gain": 1.0, "init": [...], "channels": [...] },
-//       "OPNA": { "gain_l": 0.8, "gain_r": 1.0, "init": [...], "channels": [...] },
+//       "OPL2": { "clock": 3579545, "gain": 1.0, "init": [...], "channels": [...] },
+//       "OPNA": { "clock": 7987200, "gain_l": 0.8, "gain_r": 1.0, "init": [...], "channels": [...] },
 //       "OPM":  { "$ref": "opm.json" }
 //     }
 //   }
 //
+//   clock       : マスタークロック Hz (必須。無いか 0 のチップはスキップ)
 //   gain        : L/R 共通ゲイン (省略時 1.0)
 //   gain_l/gain_r: 左右個別ゲイン (指定時 "gain" より優先)
 //   "$ref"      : 他の JSON ファイル内の同名チップ定義を参照する
@@ -370,8 +371,18 @@ static void addChipsFromFile(const FmEngineApi& api, FileContext& ctx,
         const std::string chipName = it.key();
         const auto& chipDef = it.value();
 
+        uint32_t clock = 0;
+        if (chipDef.contains("clock") && chipDef["clock"].is_number_unsigned()
+            && chipDef["clock"].get<uint64_t>() <= UINT32_MAX)
+            clock = chipDef["clock"].get<uint32_t>();
+        if (clock == 0) {
+            printf("  [SKIP] %s : \"clock\" must be a positive integer (Hz)\n", chipName.c_str());
+            ctx.slots.push_back({0, false});
+            continue;
+        }
+
         uint32_t chip_id = 0;
-        const FmResult res = api.AddChip(eng, chipName.c_str(), 0, &chip_id);
+        const FmResult res = api.AddChip(eng, chipName.c_str(), clock, &chip_id);
         if (res == FM_ERR_UNKNOWN_CHIP) {
             printf("  [SKIP] %s : unknown chip type\n", chipName.c_str());
             ctx.slots.push_back({0, false});

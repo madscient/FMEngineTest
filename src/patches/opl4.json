@@ -7,6 +7,7 @@
   "chips": {
     "OPL4": {
       "_comment": "OPL4 (YMF278B): bank0(4OP×3+2OP×3)+bank1(4OP×3+2OP×3) C4半音スケール+rhythm×5",
+      "clock": 33868800,
       "init": [
         {
           "reg": "0x01",

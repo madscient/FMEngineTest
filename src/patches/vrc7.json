@@ -7,6 +7,7 @@
   "chips": {
     "VRC7": {
       "_comment": "VRC7 (DS1001) 6ch FM",
+      "clock": 3579545,
       "init": [],
       "channels": [
         {

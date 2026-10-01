@@ -2,6 +2,102 @@
 
 開発経緯の記録。現在の仕様は `README.md` と `docs/` 以下の仕様書を参照。
 
+## FmEngine_AddChip の clock=0（標準クロック）を廃止する
+
+利用者の指摘：標準クロックは典型的な値にすぎない。特定の値に決める根拠は「実機の
+実装例がある」ことだけで、ただ一つに決める理由が無い。
+
+### 変更前
+
+**確認済み**（ソースを読んだ。YMEngine `ac29207`、NukedEngine `9ae2207`、
+FMgenEngine `3ba7f6d`、DSAemuEngine `815c42a`、SAASoundEngine `4173159`、
+DSGemuEngine `ab98e87`、EPSGemuEngine `63c8834`）：
+
+- 7 本とも、clock=0 なら自前の既定値を使う
+- 既定値がエンジンによって食い違う。SSG は FMgen と Nuked（チップ名 `PSG`）が
+  3,579,545、DSAemu と EPSGemu が 2,000,000。同じ `ssg.json` でも、エンジンに
+  よって前提のクロックが違っていた
+- `SSGS` は DSAemu では Y8960 の SSGS（3,579,545）、EPSGemu では YMZ705
+  （4,096,000）。同じチップ名で別のチップを指している。この変更では扱わない
+- FMEngineTest の `src/main.cpp` は常に clock=0 を渡していた
+
+DBOPLEngine と SCCIBridgeEngine は**未確認**（ソースが手元に無い）。
+
+### 決めたこと（利用者と決めた）
+
+- `FmEngine_AddChip` は clock=0 を受け付けない。エンジンは `FM_ERR_INVALID_ARG`
+  を返す。エンジンは既定のクロックを持たない
+- FMEngineTest は、パッチ JSON のチップ定義の `clock`（必須）を渡す。無い・0・
+  正の整数でない場合は、そのチップをスキップする
+
+前提：レジスタ値（F-Number、トーン周期など）を書く側が、そのクロックを知っている
+こと。パッチは特定のクロックを前提に書かれているので、同じファイルに置く。
+
+やり直しの値段：仕様書は `AddChip` の節だけ。エンジンは各リポジトリで数行。
+パッチは 21 ファイルに `clock` がある。
+
+見送った案：
+
+- 呼び出し側に 0 を禁じるだけにし、エンジンの挙動は定めない。理由：0 を渡す
+  呼び出し側が今までどおり動いてしまい、気づかれない
+- パッチの `clock` を任意にし、省略時は FMEngineTest の表で補う。理由：ツールの
+  中に標準クロックを作り直すことになる
+
+エンジン側の対応はまだ。上の 7 本は、0 を既定値に読み替えるので仕様に準拠しない。
+FMEngineTest は 0 を渡さなくなったので、対応前のエンジンでもそのまま動く。
+
+### パッチに書いた値
+
+チップを実装するエンジンの既定値がすべて一致するものは、その値にした。今までの
+出力が変わらない。
+
+| チップ | clock |
+|---|---|
+| Y8950, OPL, OPL2, OPLL, OPLLP, OPLLX, VRC7, OPM, OPZ | 3,579,545 |
+| OPL3 | 14,318,180 |
+| OPL4 | 33,868,800 |
+| OPN | 3,993,600 |
+| OPNA | 7,987,200 |
+| OPNB, OPNBB | 8,000,000 |
+| OPN2 | 7,670,453 |
+| DCSG, SCC | 3,579,545（DSAemu だけが実装） |
+| SAA | 8,000,000（SAASound だけが実装） |
+| SSG | 3,579,545 |
+
+SSG は食い違っていたので、パッチを書いた時点の値にした。パッチは YMEngine の
+リポジトリで作られ、当時の YMEngine の SSG は 3,579,545 だった（YMEngine
+`130c5e8^` の `src/ExternalChip.h`）。**推測**：パッチのトーン周期（106、129、
+154）はどのクロックでも音階にならず、レジスタ値からは決められなかった。DSAemu と
+EPSGemu で鳴らすと、SSG の音程が今までと変わる。
+
+`docs/patch-format.md` の最小構成の例は、コメントの 261Hz とレジスタ値が合って
+いなかった（fnum 0x241、block 4 は 3,579,545 Hz で約 438 Hz）。`opl2.json` の
+CH0 の値（fnum 0x2B0、block 3、約 261.0 Hz）に差し替えた。
+
+### 確認
+
+**確認済み**（`src/main.cpp` を MSVC 19.29 でビルドし、手元のビルドにあった DLL で
+WAV を書き出した。DLL がどのコミットからビルドされたかは確かめていない）：
+
+- `clock` が無い・0・-1 のチップは `[SKIP]` になる。7,159,090 にすると OPL2 の
+  native_rate が 99,431 になる（3,579,545 では 49,715）。clock がエンジンに
+  渡っている
+- `all.json` から `$ref` で読んだチップにも `clock` が付く（YMEngine の 16 チップが
+  追加された）
+- 変更前の exe と変更前のパッチ（clock=0）、変更後の exe と変更後のパッチで、
+  `all.json` と `test_patches.json` を 6 つの DLL で書き出して比べた。YMFMEngine、
+  NukedEngineApi、DBOPLEngine、SAASoundEngine、FmEngineApi はどちらもバイト一致。
+  FmGenEngineApi は `test_patches.json`（OPNA、OPNB、OPNBB、OPN2、OPM、SSG）が
+  バイト一致し、`all.json` は不一致だった
+- FmGenEngineApi は、同じ exe・同じパッチでも実行ごとに出力が変わる（OPN、OPNA、
+  SSG で観測。変更前の exe でも起きる）。チップごとに書き出し、食い違った区間の
+  音程をゼロ交差で比べると新旧で一致した（SSG は 4,220.7 Hz 同士）。ただし FM の
+  区間はゼロ交差の揺れが ±0.5% あり、近いクロックの違いは見分けられない。FMgen の
+  OPN の値の根拠はソースの既定値
+
+DSAemuEngine、DSGemuEngine、EPSGemuEngine は DLL が手元に無く、書き出していない
+（**未検証**）。値の根拠はソースの既定値。
+
 ## 外部メモリの ROM/RAM を区別する（FmEngine_SetMemoryEx）
 
 目的：RAM として渡したメモリブロックを、他のデバイスと共有できるようにする。

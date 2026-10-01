@@ -7,6 +7,7 @@
   "chips": {
     "OPL": {
       "_comment": "OPL (YM3526) 9ch FM. Rhythm channels: BD/SD/TT/CY/HH from drums.sb",
+      "clock": 3579545,
       "init": [
         {
           "reg": "0x01",

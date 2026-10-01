@@ -87,14 +87,16 @@ for (uint32_t i = 0; i < n; ++i)
 
 ```c
 // name : "OPNA", "OPL2" 等 (大文字小文字を区別する)
-// clock: マスタークロック Hz。0 で標準クロック
-// 戻り値: FM_OK / FM_ERR_UNKNOWN_CHIP / FM_ERR_ALLOC
+// clock: マスタークロック Hz。0 は FM_ERR_INVALID_ARG
+// 戻り値: FM_OK / FM_ERR_INVALID_ARG / FM_ERR_UNKNOWN_CHIP / FM_ERR_ALLOC
 FmResult FmEngine_AddChip(
     FmEngineHandle engine,
     const char*    name,
     uint32_t       clock,
     uint32_t*      out_id);
 ```
+
+エンジンは既定のクロックを持ちません。同じチップでも機種によってクロックが異なり、F-Number などのレジスタ値はクロックを前提に計算するため、呼び出し側が必ず指定します。
 
 ## チップ情報
 

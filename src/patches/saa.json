@@ -7,6 +7,7 @@
   "chips": {
     "SAA": {
       "_comment": "SAA1099 6ch. reg0x00-0x05=amplitude, 0x08-0x0D=frequency, 0x10-0x11=octave, 0x14=tone_enable, 0x1C=master_enable",
+      "clock": 8000000,
       "init": [
         {
           "reg": "0x1C",

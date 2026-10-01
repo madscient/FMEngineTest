@@ -7,6 +7,7 @@
   "chips": {
     "OPLL": {
       "_comment": "OPLL (YM2413) 9ch FM. Rhythm channels: BD/SD/TT/CY/HH (OPLL built-in rhythm)",
+      "clock": 3579545,
       "init": [],
       "channels": [
         {

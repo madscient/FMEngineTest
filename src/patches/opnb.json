@@ -7,6 +7,7 @@
   "chips": {
     "OPNB": {
       "_comment": "OPNB (YM2610) 4ch FM + 3ch SSG (CH0/3は無効)",
+      "clock": 8000000,
       "init": [],
       "channels": [
         {

@@ -18,6 +18,7 @@
   "chips": {
     "OPL2": {
       "_comment": "YM3812 9ch FM. CH0-8. 各chはOP1(MOD)+OP2(CAR)で構成",
+      "clock": 3579545,
       "init": [
         {
           "reg": "0x01",
@@ -551,6 +552,7 @@
     },
     "OPN2": {
       "_comment": "YM2612 6ch FM. CH0-2はport0、CH3-5はport1",
+      "clock": 7670453,
       "init": [
         {
           "reg": "0x22",
@@ -1536,6 +1538,7 @@
     },
     "SCC": {
       "_comment": "SCC 5ch. SCC_writeReg アドレス体系: 0x00-0x9F=波形, 0xC0-0xC9=周波数, 0xD0-0xD4=ボリューム, 0xE1=CH enable",
+      "clock": 3579545,
       "init": [
         {
           "reg": "0xE0",
@@ -2337,6 +2340,7 @@
     },
     "SSG": {
       "_comment": "YM2149 3ch PSG. CH A=0,B=1,C=2",
+      "clock": 3579545,
       "init": [
         {
           "reg": "0x07",
@@ -2447,6 +2451,7 @@
     },
     "DCSG": {
       "_comment": "DCSG(SN76489) 3tone+1noise. reg無視、valをシリアルバイトとしてwriteIOへ渡す",
+      "clock": 3579545,
       "init": [],
       "channels": [
         {
@@ -2569,6 +2574,7 @@
     },
     "SAA": {
       "_comment": "SAA1099 6ch. reg0x00-0x05=amplitude, 0x08-0x0D=frequency, 0x10-0x11=octave, 0x14=tone_enable, 0x1C=master_enable",
+      "clock": 8000000,
       "init": [
         {
           "reg": "0x1C",
@@ -2772,6 +2778,7 @@
     },
     "OPLL": {
       "_comment": "OPLL (YM2413) 9ch. 0x3x=inst/vol, 0x1x=fnum_lo, 0x2x=sus/keyon/block/fnum_hi",
+      "clock": 3579545,
       "init": [],
       "channels": [
         {
@@ -3012,6 +3019,7 @@
     },
     "OPNA": {
       "_comment": "OPNA (YM2608) 6ch FM. OPNA固有のクロック(7987200Hz)でfnum計算",
+      "clock": 7987200,
       "init": [
         {
           "reg": "0x22",
@@ -4001,6 +4009,7 @@
     },
     "OPNB": {
       "_comment": "OPNB (YM2610) 4ch FM. channel_mask=0x36 で CH0/3(rch0)は無効。有効チャンネル: CH1,2(port0 rch1,2), CH4,5(port1 rch1,2)",
+      "clock": 8000000,
       "init": [],
       "channels": [
         {
@@ -4651,6 +4660,7 @@
     },
     "OPNBB": {
       "_comment": "OPNBB (YM2610B) 6ch FM. clk=8000000Hz",
+      "clock": 8000000,
       "init": [],
       "channels": [
         {
@@ -5623,6 +5633,7 @@
     },
     "OPM": {
       "_comment": "OPM (YM2151) 8ch. OPM opオフセット: CH c の M1=c, M2=c+8, C1=c+16, C2=c+24 (ch*4 ではない)",
+      "clock": 3579545,
       "init": [
         {
           "reg": "0x01",

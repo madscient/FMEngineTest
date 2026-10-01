@@ -7,6 +7,7 @@
   "chips": {
     "OPNA": {
       "_comment": "OPNA (YM2608) 6ch FM + 3ch SSG. 0x29=0x80 でCH3-5有効化 + ADPCM-A rhythm×6 (requires ym2608.rom)",
+      "clock": 7987200,
       "init": [
         {
           "reg": "0x22",

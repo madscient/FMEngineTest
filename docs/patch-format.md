@@ -16,15 +16,16 @@
   "global": { "note_ms": 800, "rest_ms": 200 },
   "chips": {
     "OPL2": {
+      "clock": 3579545,
       "gain": 1.0,
       "init": [ {"reg": "0x01", "val": "0x20"} ],
       "channels": [
         {
           "ch": 0,
-          "_comment": "261Hz",
-          "init":    [ {"reg": "0xA0", "val": "0x41"} ],
-          "key_on":  [ {"reg": "0xB0", "val": "0x32"} ],
-          "key_off": [ {"reg": "0xB0", "val": "0x12"} ]
+          "_comment": "261Hz block=3 fnum=0x2B0",
+          "init":    [ {"reg": "0xA0", "val": "0xB0"} ],
+          "key_on":  [ {"reg": "0xB0", "val": "0x2E"} ],
+          "key_off": [ {"reg": "0xB0", "val": "0x0E"} ]
         }
       ]
     }
@@ -45,8 +46,11 @@
 
 チップ名は `FmEngine_GetSupportedChip` で列挙される文字列と一致させてください（大文字小文字を区別）。
 
+レジスタ値 (F-Number、トーン周期など) は `clock` のクロックを前提に書きます。エンジンは既定のクロックを持たないので、`clock` はチップごとに必ず指定します。
+
 | フィールド | 型 | 説明 |
 |---|---|---|
+| `clock` | number | **必須**。マスタークロック (Hz)。省略したチップや 0 を指定したチップはスキップされる |
 | `gain` | number | L/R 共通ゲイン。省略時 1.0 |
 | `gain_l` / `gain_r` | number | 左右独立ゲイン。指定時は `gain` より優先 |
 | `init` | array | 初期化レジスタ列。チップ起動時に 1 回だけ書き込む |
@@ -81,7 +85,7 @@
 ### $ref による外部参照
 
 チップ定義に `"$ref": "other.json"` を指定すると、  
-`other.json` 内の同名チップ定義を読み込んで置換します。  
+`other.json` 内の同名チップ定義を読み込んで置換します。`clock` も参照先の定義に書きます。  
 `all.json` のように複数チップを束ねるファイルを作る際に使います。
 
 ```json
