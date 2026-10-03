@@ -1,0 +1,16 @@
+{
+  "builtin-baseline": "930ecc42b512b564571d767f70775d284a6fa307",
+  "dependencies": [
+    "nlohmann-json",
+    {
+      "name": "rtaudio",
+      "$comment": "rtaudio のポートは、Linux のバックエンドを feature で選んだものしかビルドしない。",
+      "features": [
+        {
+          "name": "alsa",
+          "platform": "linux"
+        }
+      ]
+    }
+  ]
+}

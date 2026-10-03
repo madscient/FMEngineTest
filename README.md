@@ -11,6 +11,7 @@ FmEngineApi の仕様は [`docs/FmEngineApi.md`](docs/FmEngineApi.md)、C ヘッ
 ```
 FMEngineTest/
 ├── CMakeLists.txt
+├── vcpkg.json                ← 依存ライブラリの一覧 (vcpkg マニフェスト)
 ├── cmake/
 │   └── CheckApiSymbols.cmake ← ヘッダと仕様書のシンボル一覧の突き合わせ
 ├── docs/
@@ -18,9 +19,6 @@ FMEngineTest/
 │   └── patch-format.md      ← パッチ / テストスイート JSON フォーマット仕様
 ├── include/
 │   └── FmEngineApi.h        ← FmEngineApi C ヘッダ (正本)
-├── extern/
-│   ├── nlohmann_json/        ← git submodule (nlohmann/json)
-│   └── rtaudio/              ← git submodule (thestk/rtaudio)
 ├── scripts/
 │   ├── collect_engines.bat   ← 互換エンジン DLL を収集するスクリプト (Windows)
 │   └── collect_engines.sh    ← 互換エンジン DLL を収集するスクリプト (Linux/macOS)
@@ -39,8 +37,11 @@ FMEngineTest/
 ```bash
 git clone https://github.com/your-org/FMEngineTest
 cd FMEngineTest
-git submodule update --init --recursive
 ```
+
+依存ライブラリ (RtAudio、nlohmann/json) は [vcpkg](https://github.com/microsoft/vcpkg) から取得します。  
+vcpkg を用意し、その場所を環境変数 `VCPKG_ROOT` に設定してください。  
+ライブラリは、下の `cmake -B build ...` を実行したときに自動で取得・ビルドされます。
 
 ## ビルド
 
@@ -49,16 +50,20 @@ FmEngineApi DLL はビルド時にリンクしません。実行時に動的ロ�
 ### Windows (Visual Studio 2022)
 
 ```cmd
-cmake -B build -G "Visual Studio 17 2022" -A x64
+cmake -B build -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
 cmake --build build --config Release
 ```
 
 ### Linux / macOS
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 cmake --build build
 ```
+
+Linux では ALSA で出力します。
 
 成果物: `build/bin/FMEngineTest` (または `FMEngineTest.exe`)
 

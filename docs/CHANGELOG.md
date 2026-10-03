@@ -2,6 +2,141 @@
 
 開発経緯の記録。現在の仕様は `README.md` と `docs/` 以下の仕様書を参照。
 
+## 依存ライブラリを vcpkg から取る
+
+利用者の要望：nlohmann/json と RtAudio を vcpkg 経由にしたい。
+
+### 変更前
+
+**確認済み**（2026-10-03 に `CMakeLists.txt` とサブモジュールを読んだ）：
+
+- 2 つとも git サブモジュール（`extern/nlohmann_json`、`extern/rtaudio`）だった。
+  RtAudio は `add_subdirectory` でビルドし、nlohmann/json は `single_include` を
+  include パスに足していた
+- RtAudio は `e5f0774`（2026-02-27）。タグ 6.0.1（2023-08-01）から 72 コミット後
+- nlohmann/json は `25c58ac`（2026-06-23）。develop の途中で、タグ v3.12.0 とは
+  互いに祖先でない。ヘッダのバージョンは 3.12.0
+- Windows では、RtAudio のバックエンドは WASAPI だけで、RtAudio は DLL
+
+### 決めたこと（利用者と決めた）
+
+- 依存は `vcpkg.json`（マニフェスト）に書き、`CMakeLists.txt` は `find_package` で
+  探す。サブモジュールと `.gitmodules` は外す。どのプラットフォームでも vcpkg を
+  前提にする
+- RtAudio は vcpkg のポートの版（6.0.1）をそのまま使う
+- README のビルド手順は、今までのコマンドに `-DCMAKE_TOOLCHAIN_FILE` を足す形に
+  する。`CMakePresets.json` は足さない
+- Linux のバックエンドは ALSA だけにする
+
+前提：
+
+- RtAudio の 6.0.1 から `e5f0774` までの修正が、このツールに要らないこと。
+  マージを除いて 23 コミットが `RtAudio.cpp` / `RtAudio.h` を変えている。WASAPI に
+  関わるのは 3 つで、COM スマートポインタへの書き換え（`028484c`）、その書き換えで
+  入った出力が無音になる不具合の修正（`4f51d0a`）、入力側の 1 行の修正
+  （`44d2f4a`）。6.0.1 は書き換えの前にあたる（**確認済み**：6.0.1 の
+  `RtAudio.cpp` に `ComPtr` は 0 件、`e5f0774` には 34 件）。ほかに無くなるのは、
+  ALSA のメモリリークの修正（`cad7908`）と S24_3LE 対応（`43a3211`）、CoreAudio の
+  修正 2 つ（`9929045`、`b0e3374`）、PulseAudio の入力の遅延の改善（`b6edd70`）
+  など。この一覧はコミットの題を読んだもので、差分は `4f51d0a` しか読んでいない
+- ビルドする人が vcpkg を用意できること
+
+やり直しの値段：
+
+- サブモジュールに戻す：この変更を戻す（`CMakeLists.txt`、`README.md`、
+  `.gitmodules`、`vcpkg.json`）
+- RtAudio を別の版にする：オーバーレイポートを足す。`CMakeLists.txt` は
+  変わらない。**未検証**：作っていない。vcpkg のポートが当てているパッチ
+  （`fix-pulse.patch`）が新しいソースに当たるかも確かめていない
+- 依存の版を上げる：`vcpkg.json` の `builtin-baseline` を 1 行変える
+- プリセットを足す：`CMakePresets.json` を足すだけ。プリセット名は外に出る値に
+  なる
+
+### 利用者と明示的には決めていないこと
+
+変えるときは `vcpkg.json` か `CMakeLists.txt` の数行で済む。
+
+- `builtin-baseline` で vcpkg のポートの版を固定した（microsoft/vcpkg の
+  `930ecc4`、2026-06-24）。RtAudio は 6.0.1（port-version 1）、nlohmann-json は
+  3.12.0（port-version 2）になる。固定しないと、ビルドする人の vcpkg の版に
+  よって依存の版が変わる。**推測**：vcpkg を浅いクローン（`--depth 1`）で用意した
+  場合は、このコミットを読めずに止まる（vcpkg はベースラインの版の一覧を git の
+  履歴から読む、という理解による。試していない）
+- `vcpkg.json` に `name` と `version` は書いていない。`CMakeLists.txt` の
+  `project()` と二重に持たないため
+- トリプレットは vcpkg の既定のまま。Windows（`x64-windows`）では RtAudio は DLL
+  で、ビルド時に exe の隣へコピーされる。Debug 構成の DLL は `rtaudiod.dll` に
+  なる（今までは `rtaudio.dll`）
+- Linux では RtAudio の `alsa` feature を指定した。vcpkg のポートは、feature で
+  選ばなかった ALSA と PulseAudio を無効にし、JACK は常に無効にする（**確認済み**：
+  ポートの `portfile.cmake` を読んだ）。今までは、RtAudio の `CMakeLists.txt` が
+  ALSA を既定で有効にし、PulseAudio と JACK は見つかれば有効にしていた。
+  PulseAudio は `vcpkg.json` に feature を 1 つ足せば有効になる。JACK は、ポートを
+  変えない限り有効にできない
+- vcpkg のツールチェーンを通さずに configure すると、案内を出して止まる。
+  `find_package` に `REQUIRED` を付けず、見つからないときに自前のメッセージを出す。
+  案内には、既存のビルドディレクトリでは `--fresh` が要ることも書いた。
+  ツールチェーンを渡しているのに止まる場合が、これにあたる
+- `FMEngineTest` の `DEBUG_POSTFIX ""` を外した。`add_subdirectory` した RtAudio が
+  `CMAKE_DEBUG_POSTFIX` をキャッシュに書くのを打ち消すためのものだった
+
+### 見送った案
+
+- サブモジュールを残し、vcpkg のツールチェーンが無いときはそこからビルドする。
+  理由：利用者が vcpkg だけにすることを選んだ。`CMakeLists.txt` に 2 経路が残り、
+  版の違う RtAudio を両方確かめ続けることになる
+- オーバーレイポートで、RtAudio を今までと同じコミット（`e5f0774`）に固定する。
+  理由：利用者がポートの版を選んだ。ポートの保守がこのリポジトリに来る
+- `CMakePresets.json` を足す。理由：利用者が、今のコマンドに引数を足す形を選んだ
+- Linux で `pulse` feature も指定する。理由：今回の要望に無い
+
+### 確認
+
+**確認済み**（2026-10-03。Windows 10 x64、Visual Studio 17 2022 ジェネレータ、
+MSVC 19.44、トリプレット `x64-windows`。変更後の作業ツリーをビルドして走らせた。
+コールバックの回数だけは、同じ `rtaudio.dll` をリンクした別の小さなプログラムで
+数えた）：
+
+- README のコマンドの形（ビルド先のディレクトリ名だけ変えた）で configure でき、
+  Release と Debug をビルドできる。`src/main.cpp` は変えていない。環境変数
+  `CMAKE_TOOLCHAIN_FILE` が設定されていると、引数が無くても vcpkg が使われるので、
+  この環境変数を外して走らせた
+- ツールチェーンを渡さず、環境変数も外して configure すると、案内を出して止まる
+- サブモジュールで configure したビルドディレクトリは、ツールチェーンを渡して
+  configure し直しても、依存が見つからずに同じ案内を出して止まる。
+  `cmake --fresh` を付けると通り、Release と Debug をビルドできる。Debug の
+  出力先には、以前の `rtaudio.dll` と `rtaudio.pdb` が残る
+- Debug の exe の名前に接尾辞は付かない
+- 変更前の exe（サブモジュールでビルド）と変更後の exe で、WAV の書き出しが
+  バイト一致する。YMFMEngine.dll で `patches/all.json`（48,000 Hz、183 秒）、
+  DSAemuEngine.dll で `patches/all.json` と `patches/test_patches.json`
+  （44,100 Hz）。ログも一致する。どちらも無音ではない。DLL は手元のビルドに
+  あったもので、どのコミットからビルドされたかは確かめていない
+- 変更後の exe をリアルタイム再生の経路で走らせると、ストリームが開いて始まる
+  （チップの無いパッチを渡したので、音は出していない）
+- vcpkg の RtAudio 6.0.1 で、`src/main.cpp` と同じ引数（WASAPI、48,000 Hz、
+  32 ビット浮動小数、2 ch、512 フレーム）のストリームを開き、無音を書く
+  コールバックを 2 秒回すと、192 回・98,304 フレーム呼ばれる。サブモジュールの
+  RtAudio では 180 回・92,160 フレーム。出力デバイスの一覧は同じ
+- ジェネレータで指定した版とは別のコンパイラを、vcpkg が選ぶことがある。
+  確かめた環境（Visual Studio 2022 と、それより新しい版が入っている）では、
+  vcpkg の `rtaudio.dll` は MSVC 14.51、exe は MSVC 14.44 でリンクされた（PE
+  ヘッダのリンカのバージョンを読んだ）。上の確認は、この組み合わせで行った。
+  サブモジュールのときは、どちらも 14.44 だった
+
+**未検証**：
+
+- 音が実際に聞こえること。上の確認は、無音を書くか、WAV に書き出して行った
+- Linux と macOS でのビルド（手元にコンパイラが無い）。`vcpkg.json` の `alsa`
+  feature は Windows では選ばれないので、Linux 向けの記述は一度も通っていない
+- Linux で vcpkg が ALSA をビルドできること。vcpkg の `alsa` ポートは ALSA を
+  ソースからビルドし、autoconf と libtool を要求する（ポートを読んだ）
+- Linux でのリンクの形。vcpkg の既定のトリプレット（`x64-linux`）は静的リンク
+  なので、ALSA（LGPL-2.1-or-later）が実行ファイルに静的にリンクされる
+  （トリプレットとポートの定義を読んだ。ビルドはしていない）。今までは
+  システムの共有ライブラリにリンクしていた。Linux のバイナリを配布するなら、
+  ライセンスの条件を確かめる
+
 ## 外部メモリを名前で指定する
 
 利用者の要望：外部メモリにも部位と同じ定数の問題がある。同じように、

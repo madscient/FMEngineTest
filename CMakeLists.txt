@@ -6,40 +6,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # -------------------------------------------------------
 #  依存ライブラリ
-#  git submodule add https://github.com/nlohmann/json  extern/nlohmann_json
-#  git submodule add https://github.com/thestk/rtaudio extern/rtaudio
+#  vcpkg.json に列挙してあり、vcpkg のツールチェーンが configure 時に用意する。
 #
 #  FmEngineApi DLL は実行時に動的ロードするため、
 #  ビルド時のリンクは不要。
 # -------------------------------------------------------
-set(NLOHMANN_DIR "${CMAKE_SOURCE_DIR}/extern/nlohmann_json/single_include" CACHE PATH "nlohmann/json include dir")
-set(RTAUDIO_DIR  "${CMAKE_SOURCE_DIR}/extern/rtaudio" CACHE PATH "RtAudio dir")
-
-# -------------------------------------------------------
-#  RtAudio
-#  注意: RtAudio は CMAKE_DEBUG_POSTFIX を "d" に設定するため
-#        add_subdirectory の前後でリセットする。
-# -------------------------------------------------------
-if (EXISTS "${RTAUDIO_DIR}/CMakeLists.txt")
-    set(RTAUDIO_BUILD_TESTING        OFF CACHE BOOL   "" FORCE)
-    set(RTAUDIO_TARGETNAME_UNINSTALL "RtAudioUninstall" CACHE STRING "" FORCE)
-    set(_saved_debug_postfix "${CMAKE_DEBUG_POSTFIX}")
-    add_subdirectory(${RTAUDIO_DIR} ${CMAKE_BINARY_DIR}/rtaudio EXCLUDE_FROM_ALL)
-    set(CMAKE_DEBUG_POSTFIX "${_saved_debug_postfix}" CACHE STRING "" FORCE)
-    if (TARGET rtaudio AND MSVC)
-        set_target_properties(rtaudio PROPERTIES
-            DEBUG_POSTFIX            ""
-            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-            ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
-            PDB_OUTPUT_DIRECTORY     "${CMAKE_BINARY_DIR}/bin"
-        )
-    endif()
-    message(STATUS "RtAudio found: ${RTAUDIO_DIR}")
-else()
+find_package(nlohmann_json CONFIG)
+find_package(RtAudio CONFIG)
+if (NOT nlohmann_json_FOUND OR NOT RtAudio_FOUND)
     message(FATAL_ERROR
-        "RtAudio not found at ${RTAUDIO_DIR}\n"
-        "  Run: git submodule add https://github.com/thestk/rtaudio extern/rtaudio\n"
-        "       git submodule update --init --recursive")
+        "nlohmann_json or RtAudio not found\n"
+        "  Configure with the vcpkg toolchain:\n"
+        "       -DCMAKE_TOOLCHAIN_FILE=<vcpkg root>/scripts/buildsystems/vcpkg.cmake\n"
+        "  A build directory reads the toolchain only when it is first configured.\n"
+        "  For an existing one, add --fresh.")
 endif()
 
 # -------------------------------------------------------
@@ -60,11 +40,12 @@ add_executable(FMEngineTest src/main.cpp)
 
 target_include_directories(FMEngineTest PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${NLOHMANN_DIR}
-    ${RTAUDIO_DIR}
 )
 
-target_link_libraries(FMEngineTest PRIVATE rtaudio)
+target_link_libraries(FMEngineTest PRIVATE
+    RtAudio::rtaudio
+    nlohmann_json::nlohmann_json
+)
 
 if (UNIX)
     target_link_libraries(FMEngineTest PRIVATE dl)
@@ -73,7 +54,6 @@ endif()
 if (MSVC)
     set_target_properties(FMEngineTest PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-        DEBUG_POSTFIX            ""
     )
     target_compile_options(FMEngineTest PRIVATE /W4 /wd4100 /utf-8)
 endif()
