@@ -133,7 +133,7 @@ Using device id=1
 Opening stream (device=1, rate=48000, frames=512)...
 Stream started (bufferFrames=512)
 
-[OPL2] chip_id=0, native_rate=49716 Hz
+[OPL2] chip_id=0
   CH0 261Hz ...
 ```
 

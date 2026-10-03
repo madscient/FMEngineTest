@@ -2,6 +2,108 @@
 
 開発経緯の記録。現在の仕様は `README.md` と `docs/` 以下の仕様書を参照。
 
+## FmEngine_GetNativeRate を廃止する
+
+利用者の指摘：`FmEngine_GetNativeRate` は、何を返すかがあいまいで、
+アプリケーションの側にも使い道が無い。
+
+### 変更前
+
+**確認済み**（2026-10-03 に各リポジトリを fetch し、`origin/HEAD` を `git grep` で
+検索して、実装を読んだ。YMEngine `7d8ed2d`、NukedEngine `933f16d`、FMgenEngine
+`34079ec`、DSAemuEngine `85a7276`、DBOPLEngine `c67d84f`、EPSGemuEngine `7cd1e8a`、
+DSGemuEngine `a1894f5`、SAASoundEngine `bb0c0cd`、SCCIBridgeEngine `808065e`、
+Y8960emu `da2ab34`、FitomEmuIF `d81075c`、FITOM_X `29b2c31`、FITOMApp `dbb7c25`、
+Y8960Sequencer `370f7d4`）：
+
+- 実装しているエンジンは 10 本で、返すものが揃っていない
+  - YMEngine：FM 部を生成するレート（OPN/OPNA では prescale の書き込みで変わる）
+  - FMgenEngine：実機の FM 部のレート。生成には使っていない。SSG は clock / 16
+  - DBOPLEngine：ホストのサンプルレート
+  - SAASoundEngine：clock / 512
+  - SCCIBridgeEngine：チップのクロックそのもの
+  - NukedEngine、DSAemuEngine、EPSGemuEngine、DSGemuEngine、Y8960emu：チップごとに
+    持っている値を返す（何の値かは読んでいない）
+- アプリケーション（FitomEmuIF、Y8960Sequencer、FITOM_X、FITOMApp）は呼んで
+  いない。FitomEmuIF にあるのは、ヘッダの写しの宣言と、テスト用のスタブ
+  エンジンのエクスポートだけ
+- 呼ぶのは、エンジン自身のテスト（YMEngine、FMgenEngine、DSAemuEngine、
+  DBOPLEngine、Y8960emu）と、このリポジトリの `src/main.cpp`。`main.cpp` は必須
+  シンボルとして読み込み、チップごとのログに `native_rate=` として出していた
+
+**確認済み**（変更前のツールで `patches/all.json` を走らせ、ログを読んだ）：返る値は
+YMFMEngine.dll が 44,100〜55,930 の 6 通り、DSAemuEngine.dll が 49,715 /
+223,721 / 447,443 / 1,789,772、SAASoundEngine.dll が 15,625。
+
+### 決めたこと（利用者と決めた）
+
+`FmEngine_GetNativeRate` を仕様から外す。必須シンボルは 12 個から 11 個になる。
+
+前提：アプリケーションが使っていないこと（上の確認の範囲）。
+
+やり直しの値段：同じ名前で戻すのは、仕様書・ヘッダ・`src/main.cpp` に行を足す
+だけ。ただし、戻した時点で、エクスポートをやめたエンジンは非準拠になる。意味を
+決めた別の関数を任意で足すなら、互換は壊れない。
+
+### 仕様書・ヘッダに書いていないが、こう扱ったこと
+
+- `src/main.cpp` のチップごとのログは `[OPL2] chip_id=0` になる。エンジンが
+  `FmEngine_GetNativeRate` をエクスポートしていても、呼ばない
+- クロックがエンジンに渡ったことを、ログで確かめられなくなる。「FmEngine_AddChip の
+  clock=0（標準クロック）を廃止する」の節は、`native_rate` が変わることを根拠に
+  していた。以後は、書き出した WAV の音程で確かめる
+- 仕様書は、一覧に無いシンボルのエクスポートを禁じていない。エンジンが
+  `FmEngine_GetNativeRate` を残していても準拠する
+
+### 見送った案
+
+- 意味を決め直して残す（FM 部を生成するレート、などと定める）。理由：利用者が
+  廃止を選んだ。アプリケーションに使い道が無い
+
+### エンジンとアプリケーション側の対応（まだ）
+
+- 10 本のエンジン：ヘッダを `include/FmEngineApi.h` の写しにし、
+  `FmEngine_GetNativeRate` のエクスポートと、それを呼ぶテストをやめる
+- FitomEmuIF：ヘッダの写しと、テスト用のスタブエンジンを直す
+
+対応前のエンジンは、新しい呼び出し側からそのまま使える。逆に、この変更より前の
+FMEngineTest は、エクスポートをやめたエンジンをロードできない
+（`FmEngine_GetNativeRate` を必須として読むため）。
+
+### 確認
+
+**確認済み**：
+
+- `cmake/CheckApiSymbols.cmake`：ヘッダと仕様書が 19 シンボルで一致する（必須 11、
+  部位 4、外部メモリ 3、外部メモリの割り当て 1）
+- `src/main.cpp` を MSVC 19.44（x64、Release）でビルドできる
+- 検証用の最小のエンジン（リポジトリには入れていない）と、変更前（`4006d3e`）・
+  変更後のツールの組み合わせ：
+  - `FmEngine_GetNativeRate` をエクスポートしないエンジン：変更後のツールは
+    ロードして最後まで走る。変更前のツールは `FmEngine_GetNativeRate not found in
+    DLL` でロードに失敗する（対照）
+  - エクスポートを残したエンジン（呼ばれたら記録する）：変更後のツールでは記録が
+    出ない。変更前のツールでは、チップの数だけ記録が出る（対照）
+- 変更前と変更後のツールで `patches/all.json` を WAV に書き出すと、バイト一致
+  する。YMFMEngine.dll、DSAemuEngine.dll、SAASoundEngine.dll で比べた。どれも
+  無音ではない。ログの違いは `, native_rate=… Hz` の有無だけ。DLL は手元の
+  ビルドにあったもので、どのコミットからビルドされたかは確かめていない
+- ヘッダは MSVC の C（`/TC`）と C++（`/TP`）の両方で通り、19 関数すべてを、
+  仕様書の引数を書いた関数ポインタに代入できる。`FmEngine_GetNativeRate` を使う
+  コードはコンパイルできない。変更前のヘッダでは通る（対照）
+- 「外部メモリを名前で指定する」の節で未検証だった、実際のエンジンでの問い合わせ：
+  名前で指定する形をエクスポートする手元のビルド（DSAemuEngine.dll と
+  FmGenEngine.dll）に変更後のツールを当てると、仕様書の表の名前が返る。
+  DSAemuEngine の Y8950 は `ADPCM_B` と `ADPCM_B_ROMMODE`、FMgenEngine の OPNA は
+  `ADPCM_B` と `ADPCM_B_ROMMODE`、OPNB と OPNBB は `ADPCM_A` と `ADPCM_B`。ROM
+  ファイルは置いていないので、実際のエンジンへの `FmEngine_SetMemory` は通って
+  いない
+
+**未検証**：
+
+- GCC / Clang でのビルド（手元に無い）
+- 仕様書の C# サンプル（コンパイルしていない）
+
 ## 依存ライブラリを vcpkg から取る
 
 利用者の要望：nlohmann/json と RtAudio を vcpkg 経由にしたい。

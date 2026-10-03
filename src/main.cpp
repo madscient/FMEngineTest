@@ -80,7 +80,6 @@ struct FmEngineApi {
     decltype(&FmEngine_GetSupportedChip) GetSupportedChip = nullptr;
     decltype(&FmEngine_AddChip)          AddChip          = nullptr;
     decltype(&FmEngine_GetChipName)      GetChipName      = nullptr;
-    decltype(&FmEngine_GetNativeRate)    GetNativeRate    = nullptr;
     decltype(&FmEngine_GetSampleRate)    GetSampleRate    = nullptr;
     decltype(&FmEngine_Write)            Write            = nullptr;
     decltype(&FmEngine_SetGain)          SetGain          = nullptr;
@@ -137,7 +136,6 @@ static bool loadApi(const char* dllPath, FmEngineApi& api, DllHandle& outHandle)
     LOAD_SYM(api, h, GetSupportedChip)
     LOAD_SYM(api, h, AddChip)
     LOAD_SYM(api, h, GetChipName)
-    LOAD_SYM(api, h, GetNativeRate)
     LOAD_SYM(api, h, GetSampleRate)
     LOAD_SYM(api, h, Write)
     LOAD_SYM(api, h, SetGain)
@@ -438,9 +436,7 @@ static void playChipsFromFile(const FmEngineApi& api, const FileContext& ctx,
         if (chipDef.contains("init"))
             applyRegs(api, eng, chip_id, chipDef["init"]);
 
-        printf("[%s] chip_id=%u, native_rate=%u Hz\n",
-               api.GetChipName(eng, chip_id),
-               chip_id, api.GetNativeRate(eng, chip_id));
+        printf("[%s] chip_id=%u\n", api.GetChipName(eng, chip_id), chip_id);
 
         if (!chipDef.contains("channels")) continue;
 
@@ -690,9 +686,7 @@ static bool renderToWav(const FmEngineApi& api, FmEngineHandle eng,
             if (chipDef.contains("init"))
                 applyRegs(api, eng, chip_id, chipDef["init"]);
 
-            printf("[%s] chip_id=%u, native_rate=%u Hz\n",
-                   api.GetChipName(eng, chip_id),
-                   chip_id, api.GetNativeRate(eng, chip_id));
+            printf("[%s] chip_id=%u\n", api.GetChipName(eng, chip_id), chip_id);
 
             if (!chipDef.contains("channels")) continue;
 

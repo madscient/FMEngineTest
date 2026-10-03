@@ -83,11 +83,6 @@ FmResult FmEngine_AddChip(
 ```c
 const char* FmEngine_GetChipName(FmEngineHandle engine, uint32_t chip_id);
 
-// ネイティブサンプルレート (Hz、端数切り捨て)
-// FM と SSG を別のレートで生成するチップ (OPN 系) では FM 部のレート
-// OPN/OPNA では prescale レジスタ (0x2D-0x2F) の書き込みで変わる
-uint32_t    FmEngine_GetNativeRate(FmEngineHandle engine, uint32_t chip_id);
-
 uint32_t    FmEngine_GetSampleRate(FmEngineHandle engine);
 ```
 
@@ -343,7 +338,6 @@ FmEngine_Inquiry
 FmEngine_GetSupportedChip
 FmEngine_AddChip
 FmEngine_GetChipName
-FmEngine_GetNativeRate
 FmEngine_GetSampleRate
 FmEngine_Write
 FmEngine_SetGain
@@ -389,7 +383,6 @@ static class FmEngineApi {
     [DllImport(DLL)] public static extern int     FmEngine_AddChip(
         IntPtr engine, string name, uint clock, out uint chipId);
     [DllImport(DLL)] public static extern IntPtr  FmEngine_GetChipName(IntPtr engine, uint chipId);
-    [DllImport(DLL)] public static extern uint    FmEngine_GetNativeRate(IntPtr engine, uint chipId);
     [DllImport(DLL)] public static extern uint    FmEngine_GetSampleRate(IntPtr engine);
     [DllImport(DLL)] public static extern int     FmEngine_Write(
         IntPtr engine, uint chipId, byte reg, byte value, uint port);
