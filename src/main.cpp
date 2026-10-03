@@ -64,65 +64,34 @@
 #  include <errno.h>
 #endif
 #include "nlohmann/json.hpp"
+#include "FmEngineApi.h"
 
 using json = nlohmann::json;
 
 // =========================================================
-//  FmEngineApi 型定義
-//  (FmEngineApi.h を include せず、ここで再定義する)
-// =========================================================
-typedef struct FmEngineOpaque* FmEngineHandle;
-
-typedef enum {
-    FM_OK                =  0,
-    FM_ERR_INVALID_ARG   = -1,
-    FM_ERR_UNKNOWN_CHIP  = -2,
-    FM_ERR_ALLOC         = -3,
-    FM_ERR_UNAVAILABLE   = -4,
-} FmResult;
-
-typedef enum {
-    FM_MEM_ADPCM_A = 1,
-    FM_MEM_ADPCM_B = 2,
-    FM_MEM_PCM     = 3,
-} FmMemoryType;
-
-// =========================================================
-//  関数ポインタ型定義
-// =========================================================
-typedef FmEngineHandle (*PFN_FmEngine_Create)(uint32_t);
-typedef void           (*PFN_FmEngine_Destroy)(FmEngineHandle);
-typedef uint32_t       (*PFN_FmEngine_Inquiry)(FmEngineHandle);
-typedef const char*    (*PFN_FmEngine_GetSupportedChip)(FmEngineHandle, uint32_t);
-typedef FmResult       (*PFN_FmEngine_AddChip)(FmEngineHandle, const char*, uint32_t, uint32_t*);
-typedef const char*    (*PFN_FmEngine_GetChipName)(FmEngineHandle, uint32_t);
-typedef uint32_t       (*PFN_FmEngine_GetNativeRate)(FmEngineHandle, uint32_t);
-typedef uint32_t       (*PFN_FmEngine_GetSampleRate)(FmEngineHandle);
-typedef FmResult       (*PFN_FmEngine_Write)(FmEngineHandle, uint32_t, uint8_t, uint8_t, uint32_t);
-typedef FmResult       (*PFN_FmEngine_SetGain)(FmEngineHandle, uint32_t, float, float);
-typedef FmResult       (*PFN_FmEngine_GetGain)(FmEngineHandle, uint32_t, float*, float*);
-typedef FmResult       (*PFN_FmEngine_SetMemory)(FmEngineHandle, uint32_t, FmMemoryType, const uint8_t*, uint32_t);
-typedef uint32_t       (*PFN_FmEngine_GetMemorySize)(FmEngineHandle, uint32_t, FmMemoryType);
-typedef FmResult       (*PFN_FmEngine_Generate)(FmEngineHandle, float*, float*, uint32_t);
-
-// =========================================================
 //  関数ポインタを束ねた構造体
+//  DLL は実行時にロードするので、FmEngineApi.h の宣言は型を取るためだけに使う。
+//  宣言した関数を直接呼ぶと、リンク時にエンジンのインポートライブラリが要る。
 // =========================================================
 struct FmEngineApi {
-    PFN_FmEngine_Create          Create          = nullptr;
-    PFN_FmEngine_Destroy         Destroy         = nullptr;
-    PFN_FmEngine_Inquiry         Inquiry         = nullptr;
-    PFN_FmEngine_GetSupportedChip GetSupportedChip= nullptr;
-    PFN_FmEngine_AddChip         AddChip         = nullptr;
-    PFN_FmEngine_GetChipName     GetChipName     = nullptr;
-    PFN_FmEngine_GetNativeRate   GetNativeRate   = nullptr;
-    PFN_FmEngine_GetSampleRate   GetSampleRate   = nullptr;
-    PFN_FmEngine_Write           Write           = nullptr;
-    PFN_FmEngine_SetGain         SetGain         = nullptr;
-    PFN_FmEngine_GetGain         GetGain         = nullptr;
-    PFN_FmEngine_SetMemory       SetMemory       = nullptr;
-    PFN_FmEngine_GetMemorySize   GetMemorySize   = nullptr;
-    PFN_FmEngine_Generate        Generate        = nullptr;
+    decltype(&FmEngine_Create)           Create           = nullptr;
+    decltype(&FmEngine_Destroy)          Destroy          = nullptr;
+    decltype(&FmEngine_Inquiry)          Inquiry          = nullptr;
+    decltype(&FmEngine_GetSupportedChip) GetSupportedChip = nullptr;
+    decltype(&FmEngine_AddChip)          AddChip          = nullptr;
+    decltype(&FmEngine_GetChipName)      GetChipName      = nullptr;
+    decltype(&FmEngine_GetNativeRate)    GetNativeRate    = nullptr;
+    decltype(&FmEngine_GetSampleRate)    GetSampleRate    = nullptr;
+    decltype(&FmEngine_Write)            Write            = nullptr;
+    decltype(&FmEngine_SetGain)          SetGain          = nullptr;
+    decltype(&FmEngine_GetGain)          GetGain          = nullptr;
+    decltype(&FmEngine_Generate)         Generate         = nullptr;
+
+    // 外部メモリの 3 関数は任意の組。エンジンが組をエクスポートしていなければ、
+    // 3 つとも nullptr のままにする
+    decltype(&FmEngine_GetMemoryCount)   GetMemoryCount   = nullptr;
+    decltype(&FmEngine_GetMemoryName)    GetMemoryName    = nullptr;
+    decltype(&FmEngine_SetMemory)        SetMemory        = nullptr;
 };
 
 // =========================================================
@@ -150,7 +119,7 @@ static std::string dllError() { const char* e = dlerror(); return e ? e : "unkno
 #endif
 
 #define LOAD_SYM(api, h, name) \
-    api.name = reinterpret_cast<PFN_FmEngine_##name>(dllSym(h, "FmEngine_" #name)); \
+    api.name = reinterpret_cast<decltype(api.name)>(dllSym(h, "FmEngine_" #name)); \
     if (!api.name) { \
         fprintf(stderr, "FmEngine_%s not found in DLL\n", #name); \
         return false; \
@@ -173,9 +142,16 @@ static bool loadApi(const char* dllPath, FmEngineApi& api, DllHandle& outHandle)
     LOAD_SYM(api, h, Write)
     LOAD_SYM(api, h, SetGain)
     LOAD_SYM(api, h, GetGain)
-    LOAD_SYM(api, h, SetMemory)
-    LOAD_SYM(api, h, GetMemorySize)
     LOAD_SYM(api, h, Generate)
+
+    // FmEngine_GetMemoryCount が無い DLL が FmEngine_SetMemory をエクスポートしていても、
+    // 第 3 引数がメモリの名前ではないので読み込まない
+    api.GetMemoryCount = reinterpret_cast<decltype(api.GetMemoryCount)>(
+        dllSym(h, "FmEngine_GetMemoryCount"));
+    if (api.GetMemoryCount) {
+        LOAD_SYM(api, h, GetMemoryName)
+        LOAD_SYM(api, h, SetMemory)
+    }
     outHandle = h;
     return true;
 }
@@ -270,21 +246,28 @@ static uint32_t parseVal(const std::string& s) {
 
 // =========================================================
 //  ROM テーブル
+//  エンジンが報告した外部メモリのうち、ここに載っているものに ROM ファイルを渡す
 // =========================================================
 struct RomEntry {
     std::string chipName;
-    FmMemoryType memType;
+    std::string memory;       // FmEngine_GetMemoryName が返す名前
     std::string filename;
     std::string description;
 };
 
 static const RomEntry kRomTable[] = {
-    { "OPNA",  FM_MEM_ADPCM_A, "ym2608.rom",  "YM2608 ADPCM-A ROM" },
-    { "OPNB",  FM_MEM_ADPCM_A, "ym2610.rom",  "YM2610 ADPCM-A ROM" },
-    { "OPNB",  FM_MEM_ADPCM_B, "ym2610b.rom", "YM2610 ADPCM-B ROM" },
-    { "OPNBB", FM_MEM_ADPCM_A, "ym2610.rom",  "YM2610 ADPCM-A ROM" },
-    { "OPNBB", FM_MEM_ADPCM_B, "ym2610b.rom", "YM2610 ADPCM-B ROM" },
+    { "OPNA",  "RHYTHM",  "ym2608.rom",  "YM2608 rhythm ROM"  },
+    { "OPNB",  "ADPCM_A", "ym2610.rom",  "YM2610 ADPCM-A ROM" },
+    { "OPNB",  "ADPCM_B", "ym2610b.rom", "YM2610 ADPCM-B ROM" },
+    { "OPNBB", "ADPCM_A", "ym2610.rom",  "YM2610 ADPCM-A ROM" },
+    { "OPNBB", "ADPCM_B", "ym2610b.rom", "YM2610 ADPCM-B ROM" },
 };
+
+static const RomEntry* findRom(const std::string& chipName, const char* memory) {
+    for (const auto& entry : kRomTable)
+        if (entry.chipName == chipName && entry.memory == memory) return &entry;
+    return nullptr;
+}
 
 // =========================================================
 //  $ref 解決
@@ -399,23 +382,35 @@ static void addChipsFromFile(const FmEngineApi& api, FileContext& ctx,
                     chipDef.value("gain_l", baseGain),
                     chipDef.value("gain_r", baseGain));
 
-        for (const auto& entry : kRomTable) {
-            if (entry.chipName != chipName) continue;
-            ctx.romBuffers.push_back(loadRomFile(entry.filename));
+        const uint32_t memCount = api.GetMemoryCount ? api.GetMemoryCount(eng, chip_id) : 0;
+        for (uint32_t m = 0; m < memCount; ++m) {
+            const char* memory = api.GetMemoryName(eng, chip_id, m);
+            if (!memory) {
+                printf("    [MEM] %s #%u: FmEngine_GetMemoryName returned NULL\n",
+                       chipName.c_str(), m);
+                continue;
+            }
+            const RomEntry* entry = findRom(chipName, memory);
+            if (!entry) {
+                printf("    [MEM] %s %s: no ROM file is defined for it in this tool\n",
+                       chipName.c_str(), memory);
+                continue;
+            }
+            ctx.romBuffers.push_back(loadRomFile(entry->filename));
             const auto& rom = ctx.romBuffers.back();
             if (rom.empty()) {
                 printf("    [ROM] %s: not found (%s) -- ADPCM will be silent\n",
-                       entry.description.c_str(), entry.filename.c_str());
+                       entry->description.c_str(), entry->filename.c_str());
                 continue;
             }
             const FmResult rr = api.SetMemory(
-                eng, chip_id, entry.memType, rom.data(), (uint32_t)rom.size());
+                eng, chip_id, memory, rom.data(), (uint32_t)rom.size());
             if (rr == FM_OK)
                 printf("    [ROM] %s: loaded %zu bytes\n",
-                       entry.description.c_str(), rom.size());
+                       entry->description.c_str(), rom.size());
             else
                 printf("    [ROM] %s: SetMemory failed (code=%d)\n",
-                       entry.description.c_str(), (int)rr);
+                       entry->description.c_str(), (int)rr);
         }
         ctx.slots.push_back({chip_id, true});
     }
@@ -794,7 +789,10 @@ static bool runSuiteEntry(
     DllHandle   dllHandle = nullptr;
     printf("Loading engine: %s\n", enginePath);
     if (!loadApi(enginePath, api, dllHandle)) return false;
-    printf("Engine loaded.\n\n");
+    printf("Engine loaded.\n");
+    if (!api.GetMemoryCount)
+        printf("  FmEngine_GetMemoryCount is not exported: ROM files will not be loaded.\n");
+    printf("\n");
 
     // エンジン作成
     FmEngineHandle eng = api.Create(sampleRate);

@@ -6,7 +6,29 @@ AI 向けの作業メモ。人間向けの文書は `README.md`、`docs/FmEngine
 ## 文書の置き場所
 
 - `docs/CHANGELOG.md` — 開発経緯。方針の前提、見送った案、確認結果を書く
-- `docs/FmEngineApi.md` — FmEngineApi の仕様（互換エンジンすべてが従う側）。
-  参照実装は YMEngine の `src/FmEngineApi.h` / `src/FmEngineApi.def`。
-  YMEngine の API が変わったら、この仕様書と `src/main.cpp` の型の再定義を
-  見比べる
+- `docs/FmEngineApi.md` — FmEngineApi の仕様（互換エンジンすべてが従う側）
+- `include/FmEngineApi.h` — FmEngineApi のヘッダの正本。互換エンジンと
+  アプリケーションはこれを写して使う。特定のエンジンの挙動は書かない
+
+## API を変えるとき
+
+仕様書とヘッダは同じコミットで変える。
+
+- 関数の増減と改名は `cmake/CheckApiSymbols.cmake` が突き合わせる。ヘッダの
+  宣言と、仕様書の「エクスポートシンボル一覧」が食い違うと configure が止まる。
+  比べるのは名前だけ
+- 引数の型、型定義、仕様書の C# サンプルは、読んで突き合わせる
+- `src/main.cpp` はヘッダを include して関数ポインタの型を取る。`main.cpp` が
+  呼ぶ関数（必須シンボルと外部メモリの 3 関数）の引数が呼び出しと合わなく
+  なれば、ビルドが止まる。部位ゲインと `FmEngine_SetMemoryEx` は `main.cpp` が
+  使っていないので止まらない
+
+各エンジンのリポジトリにあるヘッダは写しで、ここを変えても更新されない。
+API を変えたら、追随が要るエンジンと変更点を `docs/CHANGELOG.md` に書く。
+
+## 実装したエンジンがまだ無い API を確かめるとき
+
+仕様書とヘッダを実装より先に変えると、手元の DLL では `src/main.cpp` の新しい
+経路が一度も通らない。その API を実装した検証用の最小のエンジン（音は出さず、
+呼び出しを記録する）を作り、`-e` で渡して確かめる。エクスポートを 1 つ欠いた
+変種と、変更前のヘッダでビルドした変種も作り、落ちるべきものが落ちることを見る。

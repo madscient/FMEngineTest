@@ -2,6 +2,348 @@
 
 開発経緯の記録。現在の仕様は `README.md` と `docs/` 以下の仕様書を参照。
 
+## 外部メモリを名前で指定する
+
+利用者の要望：外部メモリにも部位と同じ定数の問題がある。同じように、
+アプリケーションが必要なメモリをエンジンに問い合わせる方式にしたい。
+
+仕様は `docs/FmEngineApi.md` の「外部メモリ (任意)」と「外部メモリの割り当て
+(任意)」、ヘッダは `include/FmEngineApi.h`。仕様書とヘッダを実装より先に書いた。
+新しい形を実装したエンジンは、まだ無い。
+
+### 変更前
+
+**確認済み**（2026-10-03 に各リポジトリを fetch し、`origin/HEAD` を `git grep` で
+検索して、該当する関数を読んだ。コミットは次の節と同じ）：
+
+- 番号で指定する `FmEngine_SetMemory` / `FmEngine_GetMemorySize`（必須）を実装する
+  エンジンは 10 本。メモリを実際に扱うのは YMEngine、FMgenEngine、DSAemuEngine、
+  EPSGemuEngine、Y8960emu の 5 本。NukedEngine、DBOPLEngine、DSGemuEngine、
+  SAASoundEngine は `FM_ERR_UNAVAILABLE` を返すスタブ。SCCIBridgeEngine は何もせずに
+  `FM_OK` を返す
+- `FmEngine_SetMemoryEx`（任意）でメモリを扱うのは YMEngine、FMgenEngine、
+  DSAemuEngine、EPSGemuEngine。NukedEngine は `FM_ERR_INVALID_ARG` を返すスタブを
+  エクスポートしている
+- EPSGemuEngine は、3 種類のコア（ソースの `amm`・`adpcm`・`pcm`）のメモリを、
+  どれも `FM_MEM_PCM` で受ける
+- チップがそのメモリを持たないときの `FmEngine_SetMemory` の戻り値は、揃って
+  いない。YMEngine と FMgenEngine は `FM_ERR_INVALID_ARG`、DSAemuEngine と
+  EPSGemuEngine とスタブの 4 本は `FM_ERR_UNAVAILABLE`、SCCIBridgeEngine は
+  `FM_OK`。仕様書は定めていなかった
+- `FmEngine_GetMemorySize` をアプリケーションは呼んでいない。呼ぶのはエンジン
+  自身のテストだけ（FMgenEngine、DSAemuEngine、DBOPLEngine）。返す値は揃って
+  いない。YMEngine と EPSGemuEngine は割り当てたブロックの合計、DSAemuEngine と
+  メモリを扱わない 5 本は常に 0。仕様書は意味を定めていなかった
+- `FmEngine_SetMemory` を呼ぶアプリケーションは FitomEmuIF（チップ名から定数への
+  対応表が 7 行、呼び出しが 1 か所）と Y8960Sequencer（呼び出しが 1 か所）。
+  このリポジトリの `src/main.cpp` は `kRomTable`（5 行）で定数を引いていた。
+  どれも「チップごとにどの定数を渡すか」を呼び出し側が表で持っている
+- `FmEngine_SetMemoryEx` を呼ぶアプリケーションは無い
+
+### 決めたこと（利用者と決めた）
+
+- 外部メモリは名前の文字列で指定する。チップが持つ外部メモリは
+  `FmEngine_GetMemoryCount` / `FmEngine_GetMemoryName` で列挙する
+- 関数の名前は変えずに置き換える。`FmEngine_SetMemory` / `FmEngine_SetMemoryEx`
+  の第 3 引数を `FmMemoryType` から `const char*` にし、`FmMemoryType` は無くす
+- 外部メモリの関数は任意の組にする。必須シンボルは 14 個から 12 個になる。
+  呼び出し側は `FmEngine_GetMemoryCount` の有無で判定する
+- 名前は、今の定数名から `FM_MEM_` を取ったものにする（`ADPCM_A`、`ADPCM_B`、
+  `ADPCM_B_ROMMODE`、`PCM`）。OPNA のリズム音の内蔵 ROM だけは、`ADPCM_A` では
+  なく `RHYTHM` にする
+- `FmEngine_GetMemorySize` は廃止する
+
+前提：
+
+- 番号で指定する形でビルドしたアプリケーション（今の FitomEmuIF と
+  Y8960Sequencer）を、新しい形のエンジンと組み合わせて使わないこと。組み合わせて
+  ROM を渡すと、DLL は番号をポインタとして読む
+- 対応前のエンジンに ROM が渡らなくなってよいこと。新しい呼び出し側は、
+  `FmEngine_GetMemoryCount` を持たない DLL を、外部メモリを持たないエンジンとして
+  扱う。このテストツールも、対応前のエンジンには ROM ファイルを渡さなくなった
+
+やり直しの値段：
+
+- 関数や外部メモリの名前を変える：仕様書の 2 節とヘッダ、`src/main.cpp` の
+  `kRomTable`、それに追随を済ませたエンジンとアプリケーション。アプリケーションが
+  名前を設定ファイルに書き始めた後は、設定ファイルにも及ぶ
+- 任意の組を必須に戻す：仕様書の節の見出しとシンボル一覧。戻した時点で、
+  エクスポートしていないエンジンは非準拠になる
+
+### 仕様書・ヘッダに書いたが、利用者と明示的には決めていないこと
+
+変えるときは、仕様書の該当行とヘッダのコメントで済む（実装しているエンジンが
+まだ無いため）。
+
+- 組にするのは `FmEngine_GetMemoryCount` / `FmEngine_GetMemoryName` /
+  `FmEngine_SetMemory` の 3 つ。`FmEngine_SetMemoryEx` は、その 3 つをエクスポート
+  するエンジンがさらに足せる任意の関数にした。`FmEngine_SetMemoryEx` だけを
+  エクスポートする形は認めない
+- 列挙で返る名前は、どれも `FmEngine_SetMemory` に渡せる。変更前は
+  `FM_MEM_ADPCM_B_ROMMODE` が `FmEngine_SetMemoryEx` 専用だった。専用にした理由は、
+  古い YMEngine の `FmEngine_SetMemory` が未知の番号をエラーにせず受け付けること
+  だった。新しい呼び出し側は `FmEngine_GetMemoryCount` の有無で古い DLL を
+  見分けるので、この理由は無くなった。列挙した名前を順に渡すアプリケーションが、
+  例外を持たずに済む
+- チップが持たないメモリの名前と、`memory` が NULL のときは `FM_ERR_INVALID_ARG`
+- `FmEngine_GetMemoryCount` は未知の chip_id に 0、`FmEngine_GetMemoryName` は
+  範囲外と未知の chip_id に NULL を返す。名前の文字列は `FmEngine_Destroy` が戻る
+  まで有効。`index` の順序は定めない。名前は ASCII の英大文字・数字・`_` で付ける
+  （どれも部位と同じ）
+- 仕様書の表にあるチップに外部メモリを持たせるエンジンは、表の名前を使う。表の
+  メモリの一部しか持たなくてもよい。表に無いチップの外部メモリは、名前を
+  エンジンが決める
+- `FmMemoryAccess`（`FM_ACCESS_ROM` / `FM_ACCESS_RAM`）は残した。つないだデバイスの
+  種類を表す値で、チップが増えても値は増えない
+- `FmEngine_SetMemory` の `data` が NULL のときと `size` が 0 のときの扱いは、
+  今回も定めていない。エンジンによって違う（DSAemuEngine は `data` が NULL で
+  `size` が 0 でなければエラー、Y8960emu はどちらかでもエラー、EPSGemuEngine は
+  `size` が 0 なら割り当てを外す）
+- 仕様書の C# サンプルで、`FmEngine_SetMemory` の `data` を `byte[]` から `IntPtr`
+  にした。`byte[]` は呼び出しの間しか固定されない。`data` を複製せずに参照する
+  エンジンでは、呼び出しの後に動いたメモリを読むことになる
+- `src/main.cpp`：エンジンが報告した外部メモリのうち、`kRomTable` に載っている
+  ものに ROM ファイルを渡す。載っていないものは `[MEM]` の行で表示する。
+  `FmEngine_GetMemoryCount` があるのに残りの 2 つが無い DLL は、ロードを失敗に
+  する。`FmEngine_GetMemoryCount` が無い DLL には、断りを 1 行出す
+
+### 見送った案
+
+- 名前で指定する関数に別の名前を付け、番号で指定する 3 関数を仕様から外す、
+  または旧式として残す。理由：利用者が同じ名前での置き換えを選んだ。旧式として
+  残す場合は `FmMemoryType` の定数もヘッダに残る
+- 必須のままにし、列挙の 2 関数も必須に足す（16 個）。理由：新しい
+  アプリケーションが、対応前の DLL を 1 本もロードできなくなる。外部メモリを持つ
+  チップが無いエンジンにもスタブが要る
+- OPNA のリズム音の内蔵 ROM も `ADPCM_A` のままにする。理由：利用者が `RHYTHM` を
+  選んだ。名前がチップごとに独立になったので、OPNB の名前を借りる必要が無い
+- 問い合わせでアドレス空間の大きさも返す（`FmEngine_GetMemorySize` の意味を
+  決め直す）。理由：利用者が名前だけを選んだ。要るようになったら関数を足せる
+  （足すだけなら互換は壊れない）
+- `FmEngine_GetMemorySize` を、引数だけ名前に変えて残す。理由：利用者が廃止を
+  選んだ
+- パッチ JSON に ROM ファイルの割り当てを書けるようにし、`kRomTable` を無くす。
+  理由：今回の要望に無い。パッチのキーは外に出る値なので、足すときに決める
+
+### エンジンとアプリケーション側の対応（まだ）
+
+- メモリを扱う 5 本（YMEngine、FMgenEngine、DSAemuEngine、EPSGemuEngine、
+  Y8960emu）：ヘッダを `include/FmEngineApi.h` の写しにする。
+  `FmEngine_GetMemoryCount` / `FmEngine_GetMemoryName` を足す。`FmEngine_SetMemory`
+  と `FmEngine_SetMemoryEx` は名前を受け取る。`FmEngine_GetMemorySize` をやめる。
+  OPNA のリズム音の内蔵 ROM は `RHYTHM` にする。EPSGemuEngine は、今 `FM_MEM_PCM`
+  で受けている 3 種類のメモリに名前を付ける
+- スタブの 5 本（NukedEngine、DBOPLEngine、DSGemuEngine、SAASoundEngine、
+  SCCIBridgeEngine）：外部メモリの関数のエクスポートをやめる
+- FitomEmuIF と Y8960Sequencer：`FmEngine_SetMemory` を必須として読むのをやめ、
+  `FmEngine_GetMemoryCount` の有無で判定する。定数を名前に置き換える
+
+対応前のエンジンは `FmEngine_GetMemoryCount` を持たないので、新しい呼び出し側からは
+外部メモリを持たないエンジンに見える。
+
+### 確認
+
+**確認済み**：
+
+- `cmake/CheckApiSymbols.cmake`：ヘッダと仕様書が 20 シンボルで一致する（必須 12、
+  部位 4、外部メモリ 3、外部メモリの割り当て 1）
+- `src/main.cpp` を MSVC 19.44（x64、Release）でビルドできる
+- 新しい形を実装した検証用の最小のエンジン（音は出さず、呼び出しを記録する。
+  リポジトリには入れていない）を作り、テストツールから叩いた：
+  - 新しい形：置いた ROM ファイルと、名前・大きさ・先頭と末尾のバイトが一致して
+    渡る。OPNBB は、エンジンが返した順（`ADPCM_B`、`ADPCM_A`）で渡る。ROM
+    ファイルを決めていないメモリ（OPNA の `ADPCM_B` と `ADPCM_B_ROMMODE`、OPL4 の
+    `PCM`）は `[MEM]` の行に出る
+  - ROM ファイルを 1 つ置かない：`not found` を出し、そのメモリには
+    `FmEngine_SetMemory` を呼ばない
+  - 外部メモリの関数をエクスポートしない変種：断りを 1 行出し、
+    `FmEngine_SetMemory` を呼ばない
+  - 番号で指定する形の変種（変更前のヘッダでビルドし、呼ばれたら記録する）：
+    断りを 1 行出し、記録は出ない
+  - `FmEngine_GetMemoryName` をエクスポートしない変種：ロードを失敗にする
+  - `FmEngine_GetMemoryName` が NULL を返す変種：`[MEM]` の行で知らせ、
+    `FmEngine_SetMemory` を呼ばない
+  - 5 つの変種は、ヘッダをエンジンの側（`FMENGINE_EXPORTS`）から使って、
+    `/W4 /WX` でビルドできる
+- 対応前の DLL（YMFMEngine.dll と DSAemuEngine.dll）をロードでき、
+  `patches/all.json` の WAV は、次の節で書き出したものとバイト一致する。ROM
+  ファイルを置かずに比べたので、ROM の有無による違いは見ていない
+- ヘッダは MSVC の C（`/TC`）と C++（`/TP`）の両方で通り、20 関数すべてを、
+  仕様書の引数を書いた関数ポインタに代入できる。`FmMemoryType`、
+  `FmEngine_GetMemorySize`、`FmPart`、`FmEngine_GetPartMask` を使うコードは
+  コンパイルできない。変更前のヘッダでは、同じ代入の試験が落ちる（対照）
+
+**未検証**：
+
+- 実際のエンジンでの動作。検証用のエンジンは音を出さないので、渡した ROM が音に
+  反映されることは確かめていない
+- 対応前のエンジンに ROM ファイルを置いた場合の音。ROM が渡らないことは上の
+  変種で確かめたが、変更前の exe と鳴らして比べてはいない
+- GCC / Clang でのビルド（手元に無い）
+- 仕様書の C# サンプル（コンパイルしていない）
+
+## 部位を名前で指定する／ヘッダの正本をこのリポジトリに置く
+
+利用者の要望：
+
+- 部位ゲインの API を使いやすくしたい。呼び出し側が定数（`FmPart`）を知らなければ
+  ならず、部位を持つデバイスが増えるたびに定数を足さなければならない
+- ヘッダの正本をこのリポジトリで管理したい
+
+仕様は `docs/FmEngineApi.md` の「部位ごとのゲイン (任意)」、ヘッダは
+`include/FmEngineApi.h`。仕様書とヘッダを実装より先に書いた。新しい形の部位ゲインを
+実装したエンジンは、まだ無い。
+
+### 変更前
+
+**確認済み**（2026-10-03 に各リポジトリを fetch し、`origin/HEAD` を `git grep` で
+検索した。YMEngine `7d8ed2d`、NukedEngine `933f16d`、FMgenEngine `8a87d40`、
+DSAemuEngine `815c42a`、DBOPLEngine `c67d84f`、EPSGemuEngine `7cd1e8a`、
+DSGemuEngine `a1894f5`、SAASoundEngine `ca97218`、SCCIBridgeEngine `808065e`、
+NesSndEngine `51ba9a6`、Y8960emu `da2ab34`、FitomEmuIF `75d9542`、FITOM_X
+`29b2c31`、FITOMApp `dbb7c25`、Y8960Sequencer `a3df3f8`）：
+
+- 番号で指定する部位ゲイン（`FmPart`、`FmEngine_GetPartMask`）をエクスポートする
+  エンジンは 7 本。実装が参照する定数は、YMEngine が 9 個すべて、NukedEngine が
+  OPLL・OPL3・OPL4 の 7 個、FMgenEngine が OPN の 2 個、DSAemuEngine が OPLL の
+  2 個、DBOPLEngine が OPL3 の 2 個。EPSGemuEngine と DSGemuEngine は、マスクが
+  常に 0 のスタブ
+- SAASoundEngine、SCCIBridgeEngine、NesSndEngine、Y8960emu はエクスポートしない
+- 部位ゲインを呼び出すのは、エンジン自身のテストだけ（YMEngine 24 行、
+  FMgenEngine 15 行、DSAemuEngine 3 行、DBOPLEngine 3 行）。アプリケーション側の
+  FitomEmuIF、FITOM_X、FITOMApp、Y8960Sequencer には呼び出しが無い
+- 部位ゲインが入ったのは YMEngine が 2026-10-01（`623c811`）、ほかの 6 本が
+  10-02。7 本ともタグは無い
+- `FmEngineApi.h` という名前のヘッダは、他のリポジトリに 8 本あり、内容は 5 通り
+  （改行の違いを除く）。ほかに、名前を変えた派生が 3 本ある（FMgenEngine の
+  `FmGenEngine.h`、NukedEngine の `NukedEngineApi.h`、SCCIBridgeEngine の
+  `ScciFmEngine.h`）
+- このリポジトリの `src/FmEngineApi.h` は初版（`c3f0e43`）のままで、部位ゲインも
+  `FmEngine_SetMemoryEx` も載っていなかった。`src/main.cpp` はこれを include せず、
+  型を再定義していた
+
+上に挙げたリポジトリの外で部位ゲインを呼び出している利用者がいるかは**未確認**。
+
+前の節「FmEngineApi 仕様書を YMEngine の部位ゲイン追加に合わせる」の前提
+（YMEngine 以外の互換エンジンが部位ゲインを実装していない）は、上のとおり
+成り立たなくなっている。任意のエクスポートとする決定は変えていない。
+
+### 決めたこと（利用者と決めた）
+
+- 部位は名前の文字列で指定する。チップが持つ部位は `FmEngine_GetPartCount` /
+  `FmEngine_GetPartName` で列挙する。チップの指定（名前で指定し、一覧は
+  問い合わせる）と同じ流儀にした
+- 関数の名前は変えずに置き換える。`FmEngine_SetPartGain` / `FmEngine_GetPartGain`
+  の第 3 引数を `FmPart` から `const char*` にし、`FmPart` と
+  `FmEngine_GetPartMask` は無くす
+- 部位の名前は、チップの中で一意な短い名前にする。OPN 系は `FM` / `SSG`、OPLL 系は
+  `MELODY` / `RHYTHM`、OPL3 は `AB` / `CD`、OPL4 は `DO0` / `DO1` / `DO2`。
+  大文字小文字を区別する
+- ヘッダの正本は `include/FmEngineApi.h` に置く
+
+前提：
+
+- 番号で指定する形を呼び出すアプリケーションが無いこと（上の確認の範囲）。
+  古いヘッダでビルドした呼び出し側が新しい DLL の `FmEngine_SetPartGain` を
+  呼ぶと、DLL は番号をポインタとして読む
+- チップあたりの部位が数個で、名前の比較の負荷が問題にならないこと
+- 各エンジンへのヘッダの配り方は、今までどおり写しであること。写し元が YMEngine
+  からこのリポジトリに変わる
+
+やり直しの値段：
+
+- 関数や部位の名前を変える：仕様書の 1 節とヘッダ、それに追随を済ませたエンジン。
+  アプリケーションが使い始めた後は、アプリケーションと、部位の名前を書いた
+  設定ファイルにも及ぶ
+- ヘッダの場所を変える：写し元として書いた各エンジンの文書に及ぶ
+
+### 仕様書・ヘッダに書いたが、利用者と明示的には決めていないこと
+
+変えるときは、仕様書の該当行とヘッダのコメントで済む（実装しているエンジンが
+まだ無いため）。
+
+- `FmEngine_GetPartCount` は、未知の chip_id に 0 を返す（部位を持たないチップと
+  区別しない）。`FmEngine_GetPartName` は、範囲外と未知の chip_id に NULL を返す
+- 4 関数は組でエクスポートする。呼び出し側は `FmEngine_GetPartCount` の有無で
+  判定する。番号で指定する形の DLL も `FmEngine_SetPartGain` をエクスポートして
+  いるので、その有無では見分けられない
+- 名前の文字列は `FmEngine_Destroy` が戻るまで有効
+- `part` が NULL なら `FM_ERR_INVALID_ARG`
+- `index` の順序は定めない。同じ chip_id には同じ順序で同じ名前を返す
+- 名前は ASCII の英大文字・数字・`_` で付ける
+- 仕様書の表にあるチップに部位を持たせるエンジンは、表の名前と既定値を使う。
+  表に無いチップの部位は、名前と既定値をエンジンが決める
+- ヘッダは `<stdint.h>` を include する。変更前は `<cstdint>` で、C からは
+  使えなかった
+- ヘッダのコメントは特定のエンジンに依らない書き方にした。YMEngine のヘッダに
+  あった YMEngine 固有の記述（`FmEngine_SetMemory` が `data` を必ず参照する、
+  KEY ON/OFF の衝突で書き込みの反映を持ち越す、など）は載せていない
+- `src/main.cpp` は型の再定義をやめ、ヘッダを include して関数ポインタの型を取る
+- `cmake/CheckApiSymbols.cmake` を足した。ヘッダが宣言する関数と、仕様書の
+  「エクスポートシンボル一覧」が食い違うと configure が止まる。比べるのは
+  名前だけ
+
+### 見送った案
+
+- チップごとに 0 から振った番号で指定し、名前は表示用に引く。理由：番号を
+  直書きでき、エンジンによって並びが違うと、黙って別の出力のゲインが変わる。
+  防ぐには仕様書で並びを固定することになり、番号の表が残る
+- 今の番号を残し、番号から名前を引く関数だけを足す。理由：新しいデバイスに
+  番号を割り当てる手間と、32 部位の上限が残る
+- 新しい関数に別の名前を付け、番号で指定する 3 関数を仕様から外す、または
+  非推奨として残す。理由：利用者が同じ名前での置き換えを選んだ。非推奨として
+  残す場合は `FmPart` の定数もヘッダに残る
+- 部位の名前に今の定数名の接尾辞（`OPN_FM`、`OPL3_AB` など）を使う。理由：
+  チップを指定した上で渡すので、チップ名を繰り返す必要が無い。OPNA の部位が
+  `OPN_FM` になるなど、チップ名と食い違って見える
+- ヘッダを `src/FmEngineApi.h` に置いたままにする。理由：利用者が `include/` を
+  選んだ
+- テストツールで部位ゲインを扱う（パッチ JSON に部位ゲインのキーを足す、部位を
+  一覧表示する）。理由：今回の要望に無い。パッチのキーは外に出る値なので、
+  足すときに決める
+
+### エンジン側の対応（まだ）
+
+番号で指定する形をエクスポートしている 7 本は、次を直すと準拠する。
+
+- ヘッダを `include/FmEngineApi.h` の写しにする（名前を変えた派生ヘッダは、
+  同じ宣言に直す）
+- `FmEngine_GetPartMask` をやめ、`FmEngine_GetPartCount` /
+  `FmEngine_GetPartName` を足す。`.def` を持つエンジンは `.def` も直す
+- `FmEngine_SetPartGain` / `FmEngine_GetPartGain` は、部位の名前を受け取る
+- 部位を持たない EPSGemuEngine と DSGemuEngine は、0 を返すスタブにするか、
+  4 関数のエクスポートをやめる（どちらも準拠）
+
+ほかのエンジンとアプリケーションは、ヘッダの写しを差し替える。
+
+対応前のエンジンは `FmEngine_GetPartCount` を持たないので、新しい呼び出し側からは
+部位を持たないエンジンに見える。
+
+### 確認
+
+**確認済み**：
+
+- `cmake/CheckApiSymbols.cmake`：今のヘッダと仕様書で通る（19 シンボル）。写しを
+  4 通りに崩すと、どれも落ちる（仕様書の一覧から 1 つ抜く、一覧に
+  `FmEngine_GetPartMask` を残す、ヘッダの宣言を改名してコメントにだけ元の名前を
+  残す、節の見出しを変える）
+- `src/main.cpp` を MSVC 19.44（x64、Release）でビルドできる。エンジンの
+  インポートライブラリ無しでリンクが通る
+- 変更前（`866f4a3`）と変更後の exe で `patches/all.json` を WAV に書き出すと、
+  バイト一致する。YMFMEngine.dll（16 チップ、183 秒）と DSAemuEngine.dll
+  （102 秒）で比べた。どちらも無音ではない。DLL は手元のビルドにあったもので、
+  どのコミットからビルドされたかは確かめていない
+- ヘッダは MSVC の C（`/TC`）と C++（`/TP`）の両方で、`/W4 /WX` で通る。任意の
+  5 関数は、仕様書の引数を書いた関数ポインタに代入して確かめた。変更前の
+  ヘッダは C では通らない（対照）
+
+**未検証**：
+
+- GCC / Clang でのビルド（手元に無い）
+- `FmEngine_SetMemory` の呼び出し。ROM ファイルが手元に無く、上の書き出しでは
+  通っていない。宣言の引数は、変更前の再定義と読んで比べて同じ
+- 仕様書の C# サンプル（コンパイルしていない）
+
 ## FmEngine_AddChip の clock=0（標準クロック）を廃止する
 
 利用者の指摘：標準クロックは典型的な値にすぎない。特定の値に決める根拠は「実機の

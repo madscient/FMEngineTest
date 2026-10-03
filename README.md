@@ -3,14 +3,21 @@
 **FmEngineApi** に準拠した FM 音源エンジンの汎用テストツールです。  
 エンジン DLL を実行時に動的ロードするため、YMEngine 以外の実装でも `-e` オプションで切り替えて動作します。
 
+FmEngineApi の仕様は [`docs/FmEngineApi.md`](docs/FmEngineApi.md)、C ヘッダは [`include/FmEngineApi.h`](include/FmEngineApi.h) にあります。  
+互換エンジンやアプリケーションを作るときは、このヘッダを写して使ってください。
+
 ## ファイル構成
 
 ```
 FMEngineTest/
 ├── CMakeLists.txt
+├── cmake/
+│   └── CheckApiSymbols.cmake ← ヘッダと仕様書のシンボル一覧の突き合わせ
 ├── docs/
 │   ├── FmEngineApi.md       ← FmEngineApi C インターフェース仕様
 │   └── patch-format.md      ← パッチ / テストスイート JSON フォーマット仕様
+├── include/
+│   └── FmEngineApi.h        ← FmEngineApi C ヘッダ (正本)
 ├── extern/
 │   ├── nlohmann_json/        ← git submodule (nlohmann/json)
 │   └── rtaudio/              ← git submodule (thestk/rtaudio)
@@ -131,11 +138,15 @@ ADPCM チップ (OPNA/OPNB/OPNBB) は ROM ファイルが必要です。
 実行ファイルと同じフォルダに配置してください。  
 存在しない場合は ADPCM チャンネルが無音になるだけです。
 
-| ファイル名 | 対象チップ |
-|---|---|
-| `ym2608.rom` | OPNA |
-| `ym2610.rom` | OPNB, OPNBB |
-| `ym2610b.rom` | OPNB, OPNBB |
+| ファイル名 | 対象チップ | 渡す先の外部メモリ |
+|---|---|---|
+| `ym2608.rom` | OPNA | `RHYTHM` |
+| `ym2610.rom` | OPNB, OPNBB | `ADPCM_A` |
+| `ym2610b.rom` | OPNB, OPNBB | `ADPCM_B` |
+
+ROM ファイルは、エンジンがその名前の外部メモリを持つと答えたチップにだけ渡します。  
+エンジンが外部メモリの関数をエクスポートしていない場合は渡しません (起動時に `FmEngine_GetMemoryCount is not exported` と表示します)。  
+外部メモリの名前は [`docs/FmEngineApi.md`](docs/FmEngineApi.md) を参照してください。
 
 ROM ファイルの入手はエンドユーザーの責任で行ってください。
 

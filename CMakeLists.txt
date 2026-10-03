@@ -42,6 +42,15 @@ else()
         "       git submodule update --init --recursive")
 endif()
 
+# -------------------------------------------------------
+#  include/FmEngineApi.h と docs/FmEngineApi.md の突き合わせ
+#  どちらかを編集すると、次のビルドでもう一度走る。
+# -------------------------------------------------------
+include(cmake/CheckApiSymbols.cmake)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/include/FmEngineApi.h"
+    "${CMAKE_SOURCE_DIR}/docs/FmEngineApi.md")
+
 # =======================================================
 #  ターゲット: FMEngineTest
 #  FmEngineApi には静的リンクしない (実行時に LoadLibrary/dlopen)
@@ -50,6 +59,7 @@ endif()
 add_executable(FMEngineTest src/main.cpp)
 
 target_include_directories(FMEngineTest PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
     ${NLOHMANN_DIR}
     ${RTAUDIO_DIR}
 )
