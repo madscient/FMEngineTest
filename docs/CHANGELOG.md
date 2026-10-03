@@ -77,7 +77,7 @@ FMEngineTest は、エクスポートをやめたエンジンをロードでき�
 - `cmake/CheckApiSymbols.cmake`：ヘッダと仕様書が 19 シンボルで一致する（必須 11、
   部位 4、外部メモリ 3、外部メモリの割り当て 1）
 - `src/main.cpp` を MSVC 19.44（x64、Release）でビルドできる
-- 検証用の最小のエンジン（リポジトリには入れていない）と、変更前（`4006d3e`）・
+- 検証用の最小のエンジン（リポジトリには入れていない）と、変更前（`a65ad3e`）・
   変更後のツールの組み合わせ：
   - `FmEngine_GetNativeRate` をエクスポートしないエンジン：変更後のツールは
     ロードして最後まで走る。変更前のツールは `FmEngine_GetNativeRate not found in
@@ -455,7 +455,7 @@ NesSndEngine `51ba9a6`、Y8960emu `da2ab34`、FitomEmuIF `75d9542`、FITOM_X
   （改行の違いを除く）。ほかに、名前を変えた派生が 3 本ある（FMgenEngine の
   `FmGenEngine.h`、NukedEngine の `NukedEngineApi.h`、SCCIBridgeEngine の
   `ScciFmEngine.h`）
-- このリポジトリの `src/FmEngineApi.h` は初版（`c3f0e43`）のままで、部位ゲインも
+- このリポジトリの `src/FmEngineApi.h` は初版（`2a289fa`）のままで、部位ゲインも
   `FmEngine_SetMemoryEx` も載っていなかった。`src/main.cpp` はこれを include せず、
   型を再定義していた
 
@@ -566,7 +566,7 @@ NesSndEngine `51ba9a6`、Y8960emu `da2ab34`、FitomEmuIF `75d9542`、FITOM_X
   残す、節の見出しを変える）
 - `src/main.cpp` を MSVC 19.44（x64、Release）でビルドできる。エンジンの
   インポートライブラリ無しでリンクが通る
-- 変更前（`866f4a3`）と変更後の exe で `patches/all.json` を WAV に書き出すと、
+- 変更前（`a17c372`）と変更後の exe で `patches/all.json` を WAV に書き出すと、
   バイト一致する。YMFMEngine.dll（16 チップ、183 秒）と DSAemuEngine.dll
   （102 秒）で比べた。どちらも無音ではない。DLL は手元のビルドにあったもので、
   どのコミットからビルドされたかは確かめていない
